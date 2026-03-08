@@ -39,7 +39,9 @@ def load_trajectories(field_name: str) -> List[Dict[str, Any]]:
             print(f"Warning: Error loading {trajectory_file}: {e}", file=sys.stderr)
 
     if not trajectories:
-        print(f"Error: No valid trajectories found in {trajectory_dir}", file=sys.stderr)
+        print(
+            f"Error: No valid trajectories found in {trajectory_dir}", file=sys.stderr
+        )
         sys.exit(1)
 
     return trajectories
@@ -59,7 +61,7 @@ def calculate_percentile(data: List[float], percentile: int) -> float:
 
 def analyze_token_usage(trajectories: List[Dict]) -> Dict[str, Any]:
     """Analyze token usage patterns."""
-    token_counts = [t.get('total_tokens', 0) for t in trajectories]
+    token_counts = [t.get("total_tokens", 0) for t in trajectories]
 
     return {
         "median": int(statistics.median(token_counts)) if token_counts else 0,
@@ -73,7 +75,7 @@ def analyze_token_usage(trajectories: List[Dict]) -> Dict[str, Any]:
 
 def analyze_cost(trajectories: List[Dict]) -> Dict[str, Any]:
     """Analyze cost distribution."""
-    costs = [t.get('total_cost', 0.0) for t in trajectories]
+    costs = [t.get("total_cost", 0.0) for t in trajectories]
 
     return {
         "median": round(statistics.median(costs), 2) if costs else 0.0,
@@ -88,7 +90,7 @@ def analyze_cost(trajectories: List[Dict]) -> Dict[str, Any]:
 
 def analyze_steps(trajectories: List[Dict]) -> Dict[str, Any]:
     """Analyze step count distribution."""
-    step_counts = [t.get('total_steps', 0) for t in trajectories]
+    step_counts = [t.get("total_steps", 0) for t in trajectories]
 
     return {
         "median": int(statistics.median(step_counts)) if step_counts else 0,
@@ -102,10 +104,10 @@ def analyze_steps(trajectories: List[Dict]) -> Dict[str, Any]:
 
 def analyze_outcomes(trajectories: List[Dict]) -> Dict[str, Any]:
     """Analyze run outcomes."""
-    outcome_counts = Counter(t.get('outcome', 'Unknown') for t in trajectories)
+    outcome_counts = Counter(t.get("outcome", "Unknown") for t in trajectories)
     total = len(trajectories)
 
-    converged = outcome_counts.get('Converged', 0)
+    converged = outcome_counts.get("Converged", 0)
     convergence_rate = (converged / total * 100) if total > 0 else 0
 
     return {
@@ -121,36 +123,38 @@ def analyze_tool_usage(trajectories: List[Dict]) -> Dict[str, Any]:
     tool_usage = defaultdict(lambda: {"total": 0, "in_success": 0, "in_failure": 0})
 
     for trajectory in trajectories:
-        is_success = trajectory.get('outcome') == 'Converged'
+        is_success = trajectory.get("outcome") == "Converged"
         tools_used = set()
 
-        for step in trajectory.get('steps', []):
-            action = step.get('action', {})
-            if action.get('type') == 'ToolCall':
-                tool = action.get('tool')
+        for step in trajectory.get("steps", []):
+            action = step.get("action", {})
+            if action.get("type") == "ToolCall":
+                tool = action.get("tool")
                 if tool:
                     tools_used.add(tool)
 
         for tool in tools_used:
-            tool_usage[tool]['total'] += 1
+            tool_usage[tool]["total"] += 1
             if is_success:
-                tool_usage[tool]['in_success'] += 1
+                tool_usage[tool]["in_success"] += 1
             else:
-                tool_usage[tool]['in_failure'] += 1
+                tool_usage[tool]["in_failure"] += 1
 
     # Calculate usage percentages
     total_runs = len(trajectories)
     result = {}
 
     for tool, stats in tool_usage.items():
-        success_rate = (stats['in_success'] / stats['total'] * 100) if stats['total'] > 0 else 0
-        usage_rate = (stats['total'] / total_runs * 100)
+        success_rate = (
+            (stats["in_success"] / stats["total"] * 100) if stats["total"] > 0 else 0
+        )
+        usage_rate = stats["total"] / total_runs * 100
 
         result[tool] = {
-            "total_uses": stats['total'],
+            "total_uses": stats["total"],
             "usage_rate": round(usage_rate, 1),
-            "in_success": stats['in_success'],
-            "in_failure": stats['in_failure'],
+            "in_success": stats["in_success"],
+            "in_failure": stats["in_failure"],
             "success_rate": round(success_rate, 1),
         }
 
@@ -162,18 +166,18 @@ def analyze_verifiers(trajectories: List[Dict]) -> Dict[str, Any]:
     verifier_stats = defaultdict(lambda: {"pass": 0, "fail": 0})
 
     for trajectory in trajectories:
-        for verifier in trajectory.get('verifier_results', []):
-            name = verifier.get('name')
+        for verifier in trajectory.get("verifier_results", []):
+            name = verifier.get("name")
             if name:
-                if verifier.get('passed'):
-                    verifier_stats[name]['pass'] += 1
+                if verifier.get("passed"):
+                    verifier_stats[name]["pass"] += 1
                 else:
-                    verifier_stats[name]['fail'] += 1
+                    verifier_stats[name]["fail"] += 1
 
     result = {}
     for name, stats in verifier_stats.items():
-        total = stats['pass'] + stats['fail']
-        pass_rate = (stats['pass'] / total * 100) if total > 0 else 0
+        total = stats["pass"] + stats["fail"]
+        pass_rate = (stats["pass"] / total * 100) if total > 0 else 0
 
         # Assess signal quality
         # Good signal: 50-90% pass rate (provides useful feedback)
@@ -184,8 +188,8 @@ def analyze_verifiers(trajectories: List[Dict]) -> Dict[str, Any]:
             signal_quality = "WEAK"
 
         result[name] = {
-            "pass": stats['pass'],
-            "fail": stats['fail'],
+            "pass": stats["pass"],
+            "fail": stats["fail"],
             "total": total,
             "pass_rate": round(pass_rate, 1),
             "signal_quality": signal_quality,
@@ -201,17 +205,17 @@ def print_text_report(analysis: Dict[str, Any], field_name: str):
     print(f"{'='*60}\n")
 
     # Outcomes
-    outcomes = analysis['outcomes']
+    outcomes = analysis["outcomes"]
     print(f"Total Runs: {outcomes['total_runs']}")
     print(f"Converged: {outcomes['converged']} ({outcomes['convergence_rate']}%)")
     print(f"Failed: {outcomes['total_runs'] - outcomes['converged']}")
-    print(f"\nOutcome breakdown:")
-    for outcome, count in outcomes['outcomes'].items():
+    print("\nOutcome breakdown:")
+    for outcome, count in outcomes["outcomes"].items():
         print(f"  {outcome}: {count}")
 
     # Token usage
     print(f"\n{'Token Usage':—^60}")
-    tokens = analysis['token_usage']
+    tokens = analysis["token_usage"]
     print(f"  Median:  {tokens['median']:,}")
     print(f"  Mean:    {tokens['mean']:,}")
     print(f"  p90:     {tokens['p90']:,}")
@@ -220,7 +224,7 @@ def print_text_report(analysis: Dict[str, Any], field_name: str):
 
     # Cost
     print(f"\n{'Cost Distribution':—^60}")
-    cost = analysis['cost']
+    cost = analysis["cost"]
     print(f"  Median:  ${cost['median']:.2f}")
     print(f"  Mean:    ${cost['mean']:.2f}")
     print(f"  p90:     ${cost['p90']:.2f}")
@@ -229,7 +233,7 @@ def print_text_report(analysis: Dict[str, Any], field_name: str):
 
     # Steps
     print(f"\n{'Step Count':—^60}")
-    steps = analysis['steps']
+    steps = analysis["steps"]
     print(f"  Median:  {steps['median']}")
     print(f"  Mean:    {steps['mean']:.1f}")
     print(f"  p90:     {steps['p90']}")
@@ -237,9 +241,11 @@ def print_text_report(analysis: Dict[str, Any], field_name: str):
 
     # Tool usage
     print(f"\n{'Tool Usage':—^60}")
-    tools = analysis['tool_usage']
+    tools = analysis["tool_usage"]
     if tools:
-        for tool, stats in sorted(tools.items(), key=lambda x: x[1]['usage_rate'], reverse=True):
+        for tool, stats in sorted(
+            tools.items(), key=lambda x: x[1]["usage_rate"], reverse=True
+        ):
             print(f"  {tool}:")
             print(f"    Usage rate: {stats['usage_rate']}%")
             print(f"    Success correlation: {stats['success_rate']}%")
@@ -248,12 +254,14 @@ def print_text_report(analysis: Dict[str, Any], field_name: str):
 
     # Verifiers
     print(f"\n{'Verifier Analysis':—^60}")
-    verifiers = analysis['verifiers']
+    verifiers = analysis["verifiers"]
     if verifiers:
         for name, stats in verifiers.items():
-            quality_marker = "✓" if stats['signal_quality'] == "GOOD" else "⚠"
+            quality_marker = "✓" if stats["signal_quality"] == "GOOD" else "⚠"
             print(f"  {quality_marker} {name}:")
-            print(f"    Pass rate: {stats['pass_rate']}% ({stats['pass']}/{stats['total']})")
+            print(
+                f"    Pass rate: {stats['pass_rate']}% ({stats['pass']}/{stats['total']})"
+            )
             print(f"    Signal quality: {stats['signal_quality']}")
     else:
         print("  No verifier data")
@@ -270,12 +278,9 @@ def main():
         "--format",
         choices=["text", "json"],
         default="text",
-        help="Output format (default: text)"
+        help="Output format (default: text)",
     )
-    parser.add_argument(
-        "--output",
-        help="Output file path (default: stdout)"
-    )
+    parser.add_argument("--output", help="Output file path (default: stdout)")
 
     args = parser.parse_args()
 
@@ -297,7 +302,7 @@ def main():
     if args.format == "json":
         output = json.dumps(analysis, indent=2)
         if args.output:
-            with open(args.output, 'w') as f:
+            with open(args.output, "w") as f:
                 f.write(output)
             print(f"Analysis written to {args.output}")
         else:
