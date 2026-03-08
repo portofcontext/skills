@@ -26,6 +26,35 @@ portlang treats agent behavior as **search through a conditioned space**. You do
 
 The runtime executes the search. Every run produces a **trajectory** (complete event log).
 
+## Prerequisites
+
+Before running portlang fields:
+
+1. **Install portlang:**
+   ```bash
+   git clone https://github.com/portofcontext/portlang
+   cd portlang && cargo build --release
+   ```
+
+2. **Set API key** (choose one):
+   ```bash
+   # For Anthropic direct
+   export ANTHROPIC_API_KEY=sk-ant-...
+
+   # For OpenRouter
+   export OPENROUTER_API_KEY=sk-or-v1-...
+   ```
+
+3. **Verify installation:**
+   ```bash
+   portlang init  # Check container support (macOS only)
+   ```
+
+**Model naming by provider:**
+- Anthropic API: `anthropic/claude-sonnet-4.6`, `anthropic/claude-opus-4.5`
+- OpenRouter: `anthropic/claude-3.5-sonnet`, `anthropic/claude-3-opus`
+- Provider auto-detected from API key (use `ANTHROPIC_API_KEY` or `OPENROUTER_API_KEY`)
+
 ## Six Primitives
 
 | Primitive | Purpose | Example |
@@ -44,7 +73,7 @@ name = "my-task"
 goal = "Create hello.py that prints 'Hello, World!'"
 
 [model]
-name = "anthropic/claude-sonnet-4.6"
+name = "anthropic/claude-sonnet-4.6"  # or "anthropic/claude-3.5-sonnet" for OpenRouter
 max_tokens = 4000
 
 [environment]
@@ -69,13 +98,15 @@ description = "Must print 'Hello, World!'"
 ## Essential Commands
 
 ```bash
-portlang run field.toml              # Execute
-portlang check field.toml            # Validate
+portlang run field.toml              # Execute once
+portlang check field.toml            # Validate configuration
 portlang converge field.toml -n 10   # Run 10x, measure reliability
 portlang list                        # Show trajectories
-portlang replay <id>                 # Debug a run
+portlang replay <id>                 # Debug a run (interactive, use q to quit)
 portlang diff <id-a> <id-b>          # Compare two runs
 ```
+
+**Note:** `replay` is interactive - press `q` to quit, `n` for next step, `p` for previous.
 
 ## Key Patterns
 
