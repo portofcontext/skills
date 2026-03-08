@@ -1,16 +1,16 @@
 ---
 name: portlang
 description: >
-Master portlang - the environment-first agent framework. Use this skill when you need to:
-(1) Create and configure field.toml files for agent tasks,
-(2) Define boundaries and verifiers to control agent behavior,
-(3) Add custom tools (shell, Python, or MCP servers),
-(4) Debug agent failures using trajectories,
-(5) Optimize agent reliability with convergence testing,
-(6) Configure Code Mode for token-efficient operations,
-(7) Structure multi-layer verification patterns,
-(8) Analyze agent behavior across multiple runs.
-portlang manages environments, not loops. You define the search space; the agent finds the path.
+  Master portlang - the environment-first agent framework. Use this skill when you need to:
+  (1) Create and configure field.toml files for agent tasks,
+  (2) Define boundaries and verifiers to control agent behavior,
+  (3) Add custom tools (shell, Python, or MCP servers),
+  (4) Debug agent failures using trajectories,
+  (5) Optimize agent reliability with convergence testing,
+  (6) Configure Code Mode for token-efficient operations,
+  (7) Structure multi-layer verification patterns,
+  (8) Analyze agent behavior across multiple runs.
+  portlang manages environments, not loops. You define the search space; the agent finds the path.
 license: MIT
 ---
 
