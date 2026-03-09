@@ -1,17 +1,10 @@
 ---
 name: portlang
-description: >
-  Master portlang - the environment-first agent framework. Use this skill when you need to:
-  (1) Create and configure field.toml files for agent tasks,
-  (2) Define boundaries and verifiers to control agent behavior,
-  (3) Add custom tools (shell, Python, or MCP servers),
-  (4) Debug agent failures using trajectories,
-  (5) Optimize agent reliability with convergence testing,
-  (6) Configure Code Mode for token-efficient operations,
-  (7) Structure multi-layer verification patterns,
-  (8) Analyze agent behavior across multiple runs.
-  portlang manages environments, not loops. You define the search space; the agent finds the path.
+description: "Master portlang - the environment-first agent framework. Use when creating field.toml files, defining boundaries and verifiers, adding custom tools (shell, Python, MCP), debugging trajectories, measuring convergence, configuring structured JSON output with output_schema, running batch evals, viewing HTML trajectory dashboards, or analyzing agent behavior across runs. portlang manages environments not loops - you define the search space, the agent finds the path."
 license: MIT
+metadata:
+  author: portofcontext
+  version: 1.1.0
 ---
 
 # portlang Skill
@@ -38,10 +31,7 @@ Before running portlang fields:
 
 2. **Set API key** (choose one):
    ```bash
-   # For Anthropic direct
    export ANTHROPIC_API_KEY=sk-ant-...
-
-   # For OpenRouter
    export OPENROUTER_API_KEY=sk-or-v1-...
    ```
 
@@ -53,7 +43,7 @@ Before running portlang fields:
 **Model naming by provider:**
 - Anthropic API: `anthropic/claude-sonnet-4.6`, `anthropic/claude-opus-4.5`
 - OpenRouter: `anthropic/claude-3.5-sonnet`, `anthropic/claude-3-opus`
-- Provider auto-detected from API key (use `ANTHROPIC_API_KEY` or `OPENROUTER_API_KEY`)
+- Provider auto-detected from API key
 
 ## Six Primitives
 
@@ -73,7 +63,8 @@ name = "my-task"
 goal = "Create hello.py that prints 'Hello, World!'"
 
 [model]
-name = "anthropic/claude-sonnet-4.6"  # or "anthropic/claude-3.5-sonnet" for OpenRouter
+name = "anthropic/claude-sonnet-4.6"
+temperature = 1.0
 max_tokens = 4000
 
 [environment]
@@ -97,20 +88,77 @@ description = "Must print 'Hello, World!'"
 
 ## Essential Commands
 
+### Execution
+
 ```bash
 portlang run field.toml              # Execute once
 portlang check field.toml            # Validate configuration
 portlang converge field.toml -n 10   # Run 10x, measure reliability
-portlang list                        # Show trajectories
-portlang replay <id>                 # Debug a run (interactive, use q to quit)
-portlang diff <id-a> <id-b>          # Compare two runs
+portlang eval ./examples/            # Run all fields in a directory
+portlang eval ./examples/ --html     # Eval with HTML dashboard output
+```
+
+### Trajectory Inspection
+
+```bash
+portlang list                          # Show all trajectories
+portlang list my-task                  # Filter by field name
+portlang list --converged --limit 5    # Last 5 successful runs
+portlang list --failed                 # Only failed runs
+portlang replay <id>                   # Debug a run (interactive)
+portlang replay <id> --format json     # JSON output
+portlang replay <id> --html            # HTML output
+portlang diff <id-a> <id-b>            # Compare two runs
+portlang diff <id-a> <id-b> --html     # HTML diff view
+portlang report <field-name>           # Adaptation analysis across runs
+portlang report my-task --converged    # Report on successful runs only
 ```
 
 **Note:** `replay` is interactive - press `q` to quit, `n` for next step, `p` for previous.
 
+### HTML Visualization
+
+```bash
+portlang view trajectory <id>          # Open trajectory as interactive HTML
+portlang view eval ./examples/         # Open eval dashboard
+portlang view diff <id-a> <id-b>       # Open trajectory comparison
+portlang view field <field-name>       # Open field adaptation report
+```
+
 ## Key Patterns
 
-### 1. Multi-Layer Verifiers (fail fast with precise feedback)
+### 1. Structured Output (agent produces validated JSON)
+
+```toml
+output_schema = '''
+{
+  "type": "object",
+  "required": ["status", "score", "details"],
+  "properties": {
+    "status": {"type": "string", "enum": ["success", "failure"]},
+    "score": {"type": "integer", "minimum": 0, "maximum": 100},
+    "details": {"type": "array", "items": {"type": "string"}}
+  }
+}
+'''
+
+# Verifiers can validate structured output with jq
+[[verifiers]]
+name = "output-exists"
+command = "test -f /workspace/output.json"
+trigger = "on_stop"
+description = "output.json must exist"
+
+[[verifiers]]
+name = "status-success"
+command = "jq -e '.status == \"success\"' /workspace/output.json"
+trigger = "on_stop"
+description = "Status must be success"
+```
+
+The agent writes `output.json` to `/workspace`. The schema is enforced at runtime—schema violations are reported as failures.
+
+### 2. Multi-Layer Verifiers (fail fast with precise feedback)
 
 ```toml
 [[verifiers]]
@@ -134,7 +182,7 @@ description = "Must match schema"
 
 Verifiers run in order, stop on first failure.
 
-### 2. Scoped Boundaries (make bad actions impossible)
+### 3. Scoped Boundaries (make bad actions impossible)
 
 ```toml
 [boundary]
@@ -143,40 +191,43 @@ allow_read = ["data/*.csv"]                  # Only input data
 network = "deny"                             # No external calls
 ```
 
-### 3. Custom Tools
-
-**Shell tool:**
-```bash
-#!/bin/bash
-# tools/word_count.sh
-FILE="$1"
-COUNT=$(wc -w "$FILE" | awk '{print $1}')
-echo "{\"count\": $COUNT}"
-```
+### 4. Re-observation (keep context fresh)
 
 ```toml
-[[tool]]
-type = "shell"
-script = "./tools/word_count.sh"
+re_observation = [
+  "echo '=== workspace ===' && ls -1 *.py *.txt 2>/dev/null | cat",
+  "echo '=== test status ===' && python -m pytest --tb=no -q 2>&1 | tail -5",
+]
 ```
 
-**Python tool:**
-```python
-#!/usr/bin/env python3
-# /// script
-# dependencies = ["pandas"]
-# ///
+These commands run before each agent step, injecting fresh state into context.
 
-def execute(input: dict) -> dict:
-    import pandas as pd
-    # Process data
-    return {"result": "..."}
+### 5. Custom Tools
+
+**Shell tool (command template):**
+```toml
+[[tool]]
+name = "word_count"
+type = "shell"
+description = "Count words in a file"
+command = "wc {path}"
+input_schema = '{"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]}'
+```
+
+**Python tool (auto-schema from type hints):**
+```python
+# tools/calculator.py
+def execute(expression: str) -> dict:
+    """Evaluate a math expression and return the result."""
+    result = eval(expression)
+    return {"result": result}
 ```
 
 ```toml
 [[tool]]
 type = "python"
-script = "./tools/processor.py"
+script = "./tools/calculator.py"
+function = "execute"  # Schema auto-extracted from type hints
 ```
 
 **MCP server:**
@@ -189,25 +240,25 @@ args = ["-y", "@modelcontextprotocol/server-filesystem", "/workspace"]
 transport = "stdio"
 ```
 
-### 4. Code Mode (for large data)
+### 6. Batch Evaluation
 
-```toml
-[code_mode]
-enabled = true
+Run all fields in a directory and get aggregate statistics:
 
-[[tool]]
-type = "python"
-script = "./tools/data_tools.py"  # Exposes data ops
+```bash
+portlang eval ./examples/
+portlang view eval ./examples/   # Open interactive HTML dashboard
 ```
 
-Agent writes TypeScript code that calls tools. Data stays outside context window.
+Useful for regression testing or measuring overall suite reliability after changes.
 
 ## Debugging Workflow
 
 1. **Run fails** → `portlang replay <id>` to see what happened
-2. **Find failure point** → Check which verifier failed
+2. **Find failure point** → Check which verifier failed and at which step
 3. **Non-determinism** → `portlang diff <id-a> <id-b>` to find divergence
-4. **Optimize** → `portlang converge -n 10` to measure reliability
+4. **Visual debugging** → `portlang view trajectory <id>` for HTML view
+5. **Optimize** → `portlang converge -n 10` to measure reliability
+6. **Patterns** → `portlang report <field-name>` for adaptation analysis
 
 ## Common Issues
 
@@ -220,11 +271,16 @@ Agent writes TypeScript code that calls tools. Data stays outside context window
 - Strengthen verifiers (make expectations explicit)
 - Tighten boundaries (restrict file access)
 - Clarify goal prompt
-- Lower temperature if too random
+- Lower `temperature` for more deterministic behavior (e.g., `temperature = 0.0`)
 
 **Verifier always passes/fails:**
 - Weak signal (>95% or <10% pass rate)
 - Adjust verifier to provide useful feedback
+
+**Structured output not valid:**
+- Add an explicit verifier to check schema
+- Ensure goal references the required fields by name
+- Use `temperature = 0.0` for more consistent JSON output
 
 ## Helper Scripts
 
