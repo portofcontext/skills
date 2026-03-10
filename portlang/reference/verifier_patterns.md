@@ -17,7 +17,7 @@ Verifiers are runtime reward signals, not post-hoc checks. Their output enters t
 ### 1. File Existence
 
 ```toml
-[[verifiers]]
+[[verifier]]
 name = "output-exists"
 command = "test -f output.json"
 trigger = "on_stop"
@@ -27,7 +27,7 @@ description = "output.json must exist"
 ### 2. Multiple Files Exist
 
 ```toml
-[[verifiers]]
+[[verifier]]
 name = "all-files-exist"
 command = "test -f analyzer.py && test -f test_analyzer.py && test -f requirements.txt"
 trigger = "on_stop"
@@ -37,7 +37,7 @@ description = "All required files must exist: analyzer.py, test_analyzer.py, req
 ### 3. Directory Structure
 
 ```toml
-[[verifiers]]
+[[verifier]]
 name = "directory-structure"
 command = """
 test -d src && test -d tests && test -f src/__init__.py && test -f tests/__init__.py
@@ -51,7 +51,7 @@ description = "Project structure: src/ and tests/ directories with __init__.py f
 ### 4. Valid JSON Syntax
 
 ```toml
-[[verifiers]]
+[[verifier]]
 name = "valid-json"
 command = "python -m json.tool output.json > /dev/null"
 trigger = "on_stop"
@@ -61,7 +61,7 @@ description = "output.json must be valid JSON"
 ### 5. JSON Schema Validation
 
 ```toml
-[[verifiers]]
+[[verifier]]
 name = "schema-valid"
 command = """
 python -c "
@@ -85,7 +85,7 @@ description = "JSON must have name, age (int), and email (string) fields"
 ### 6. Data Range Validation
 
 ```toml
-[[verifiers]]
+[[verifier]]
 name = "data-ranges"
 command = """
 python -c "
@@ -106,7 +106,7 @@ description = "Data must be in valid ranges: score [0-100], count > 0, items >= 
 ### 7. CSV Validation
 
 ```toml
-[[verifiers]]
+[[verifier]]
 name = "valid-csv"
 command = """
 python -c "
@@ -131,7 +131,7 @@ description = "CSV must have columns: name, value, category with at least one ro
 ### 8. Syntax Validity
 
 ```toml
-[[verifiers]]
+[[verifier]]
 name = "python-syntax"
 command = "python -m py_compile analyzer.py"
 trigger = "on_stop"
@@ -141,7 +141,7 @@ description = "analyzer.py must be syntactically valid Python"
 ### 9. Run Tests with pytest
 
 ```toml
-[[verifiers]]
+[[verifier]]
 name = "tests-pass"
 command = "python -m pytest test_analyzer.py -v 2>&1"
 trigger = "on_stop"
@@ -151,7 +151,7 @@ description = "All tests in test_analyzer.py must pass"
 ### 10. Run Tests with Coverage Threshold
 
 ```toml
-[[verifiers]]
+[[verifier]]
 name = "tests-with-coverage"
 command = """
 python -m pytest tests/ --cov=src --cov-report=term --cov-fail-under=80 2>&1
@@ -163,7 +163,7 @@ description = "All tests must pass with at least 80% code coverage"
 ### 11. Type Checking with mypy
 
 ```toml
-[[verifiers]]
+[[verifier]]
 name = "type-check"
 command = "python -m mypy src/ --strict 2>&1"
 trigger = "on_stop"
@@ -173,7 +173,7 @@ description = "Code must pass strict mypy type checking"
 ### 12. Linting with ruff
 
 ```toml
-[[verifiers]]
+[[verifier]]
 name = "lint-check"
 command = "python -m ruff check src/ 2>&1"
 trigger = "on_stop"
@@ -185,7 +185,7 @@ description = "Code must pass ruff linting with no errors"
 ### 13. No Uncommitted Changes
 
 ```toml
-[[verifiers]]
+[[verifier]]
 name = "clean-git"
 command = "git diff --exit-code"
 trigger = "on_stop"
@@ -195,7 +195,7 @@ description = "No uncommitted changes allowed"
 ### 14. Only Specific Files Modified
 
 ```toml
-[[verifiers]]
+[[verifier]]
 name = "scope-guard"
 command = """
 git diff --name-only | grep -qvE '^(auth\\.py|tests/)' && exit 1 || exit 0
@@ -207,7 +207,7 @@ description = "Only auth.py and tests/ should be modified"
 ### 15. Commit Message Format
 
 ```toml
-[[verifiers]]
+[[verifier]]
 name = "commit-format"
 command = """
 git log -1 --pretty=%B | grep -qE '^(feat|fix|docs|refactor|test):\\s.+' || \
@@ -222,7 +222,7 @@ description = "Commit message must follow conventional commits format"
 ### 16. Script Execution Test
 
 ```toml
-[[verifiers]]
+[[verifier]]
 name = "script-runs"
 command = """
 python analyzer.py sample.txt output.json && test -f output.json
@@ -234,7 +234,7 @@ description = "analyzer.py must execute successfully and create output.json"
 ### 17. Output Correctness Test
 
 ```toml
-[[verifiers]]
+[[verifier]]
 name = "correct-output"
 command = """
 python analyzer.py test_input.txt test_output.json
@@ -255,7 +255,7 @@ description = "analyzer.py output must match expected results"
 ### 18. Performance Benchmark
 
 ```toml
-[[verifiers]]
+[[verifier]]
 name = "performance"
 command = """
 time_output=$(time python analyzer.py large_file.txt output.json 2>&1)
@@ -280,21 +280,21 @@ description = "Script must complete in under 30 seconds"
 
 ```toml
 # Layer 1: File exists
-[[verifiers]]
+[[verifier]]
 name = "output-exists"
 command = "test -f summary.json"
 trigger = "on_stop"
 description = "summary.json must exist"
 
 # Layer 2: Valid JSON
-[[verifiers]]
+[[verifier]]
 name = "valid-json"
 command = "python -m json.tool summary.json > /dev/null"
 trigger = "on_stop"
 description = "summary.json must be valid JSON"
 
 # Layer 3: Required fields
-[[verifiers]]
+[[verifier]]
 name = "required-fields"
 command = """
 python -c "
@@ -311,7 +311,7 @@ trigger = "on_stop"
 description = "JSON must have total_revenue, regions, and top_product fields"
 
 # Layer 4: Data integrity
-[[verifiers]]
+[[verifier]]
 name = "data-integrity"
 command = """
 python -c "
@@ -334,19 +334,19 @@ description = "Data must pass integrity checks: correct types and valid values"
 ### 20. Complete Web Scraper Verification
 
 ```toml
-[[verifiers]]
+[[verifier]]
 name = "scraper-output"
 command = "test -f scraped_data.json"
 trigger = "on_stop"
 description = "scraped_data.json must exist"
 
-[[verifiers]]
+[[verifier]]
 name = "valid-json"
 command = "python -m json.tool scraped_data.json > /dev/null"
 trigger = "on_stop"
 description = "Output must be valid JSON"
 
-[[verifiers]]
+[[verifier]]
 name = "data-completeness"
 command = """
 python -c "
@@ -366,7 +366,7 @@ print(f'✓ {len(data)} items scraped, all complete')
 trigger = "on_stop"
 description = "At least 10 items, each with title, url, and date"
 
-[[verifiers]]
+[[verifier]]
 name = "no-duplicates"
 command = """
 python -c "
@@ -423,7 +423,7 @@ echo "✓ All checks passed"
 
 **Use in field.toml:**
 ```toml
-[[verifiers]]
+[[verifier]]
 name = "comprehensive-check"
 command = "./verify_output.sh"
 trigger = "on_stop"

@@ -10,35 +10,32 @@ Complete, working field.toml examples for common use cases. Copy, modify, and us
 name = "hello-world"
 description = "Create a simple hello world program"
 
+[model]
+name = "anthropic/claude-sonnet-4.6"
+temperature = 1.0
+
+[prompt]
 goal = """
 Create a Python file called hello.py that prints "Hello, World!" when run.
 Stop once the file is created.
 """
 
-[model]
-name = "anthropic/claude-sonnet-4.6"
-temperature = 1.0
-max_tokens = 4000
-
 [environment]
-type = "local"
 root = "./workspace"
 
 [boundary]
 allow_write = ["hello.py"]
-
-[context]
 max_tokens = 80000
 max_cost = "$1.00"
 max_steps = 5
 
-[[verifiers]]
+[[verifier]]
 name = "file-exists"
 command = "test -f hello.py"
 trigger = "on_stop"
 description = "hello.py must exist"
 
-[[verifiers]]
+[[verifier]]
 name = "runs-successfully"
 command = "python hello.py 2>&1 | grep -q 'Hello, World!'"
 trigger = "on_stop"
@@ -61,6 +58,11 @@ description = "Running hello.py must print 'Hello, World!'"
 name = "code-task"
 description = "Generate code with tests and verify they pass"
 
+[model]
+name = "anthropic/claude-sonnet-4.6"
+temperature = 1.0
+
+[prompt]
 goal = """
 Create a Python program that analyzes text files and reports statistics.
 
@@ -74,35 +76,26 @@ Your program should:
 Create exactly three files: analyzer.py, test_analyzer.py, requirements.txt.
 Once all three exist, stop — the verifier will run the tests automatically.
 """
-
 re_observation = [
     "echo '=== workspace ===' && ls -1 *.py *.txt 2>/dev/null | cat"
 ]
 
-[model]
-name = "anthropic/claude-sonnet-4.6"
-temperature = 1.0
-max_tokens = 4000
-
 [environment]
-type = "local"
 root = "./workspace"
 
 [boundary]
 allow_write = ["*.py", "*.txt", "requirements.txt"]
-
-[context]
 max_tokens = 80000
 max_cost = "$1.00"
 max_steps = 30
 
-[[verifiers]]
+[[verifier]]
 name = "files-exist"
 command = "test -f analyzer.py && test -f test_analyzer.py && test -f requirements.txt"
 trigger = "on_stop"
 description = "All three files must exist"
 
-[[verifiers]]
+[[verifier]]
 name = "pytest"
 command = "python -m pytest test_analyzer.py -v 2>&1"
 trigger = "on_stop"
@@ -110,21 +103,26 @@ description = "All tests must pass"
 ```
 
 **Design choices:**
-- `re_observation` shows files after each step (keeps agent aware of state)
+- `re_observation` in `[prompt]` shows files after each step
 - `allow_write` uses glob patterns for flexibility
 - Two-layer verification: existence then correctness
 - Typical tokens: ~15k, cost: ~$0.45
 
 ---
 
-## Recipe 3: Data Pipeline with Code Mode
+## Recipe 3: Data Processing with Python Tool
 
-**Use case:** Process large CSV files efficiently without loading into context.
+**Use case:** Process data using a custom Python tool.
 
 ```toml
 name = "data-filtering"
-description = "Filter and transform data using Code Mode"
+description = "Filter and transform data using a custom Python tool"
 
+[model]
+name = "anthropic/claude-sonnet-4.6"
+temperature = 0.0
+
+[prompt]
 goal = """
 You have access to data tools and user data in the workspace.
 
@@ -134,51 +132,33 @@ Task:
 3. Sort the results alphabetically by name
 4. Write the filtered and sorted list to output.json
 
-With Code Mode enabled, you can process this efficiently
-without passing all data through your context window.
-
 Stop once output.json is created correctly.
 """
 
-[model]
-name = "anthropic/claude-sonnet-4.6"
-temperature = 0.0
-max_tokens = 8000
-
 [environment]
-type = "local"
 root = "./workspace"
 
 [boundary]
 allow_write = ["output.json"]
 network = "deny"
-
-[context]
 max_tokens = 100000
 max_cost = "$1.00"
 max_steps = 15
 
-# Enable Code Mode for token efficiency
-[code_mode]
-enabled = true
-
-# Python tools exposed in Code Mode
 [[tool]]
 type = "python"
-script = "./tools/data_tools.py"
+file = "./tools/data_tools.py"
+function = "filter_and_sort"
 
-[[verifiers]]
+[[verifier]]
 name = "correct-filter"
 command = """
 python3 -c "
 import json
 with open('output.json') as f:
     users = json.load(f)
-# Check count
 assert len(users) == 58, f'Expected 58 users, got {len(users)}'
-# Check all ages > 30
 assert all(u['age'] > 30 for u in users), 'Not all users have age > 30'
-# Check sorted by name
 names = [u['name'] for u in users]
 assert names == sorted(names), 'Users not sorted by name'
 print('✓ Correct filtering and sorting')
@@ -188,32 +168,26 @@ trigger = "on_stop"
 description = "Output contains correctly filtered and sorted users"
 ```
 
-**data_tools.py:**
+**tools/data_tools.py:**
 ```python
 #!/usr/bin/env python3
 # /// script
 # dependencies = ["pandas"]
 # ///
 
-def execute(input: dict) -> dict:
+def filter_and_sort(file: str, min_age: int, output: str) -> dict:
+    """Filter users by minimum age and sort by name."""
     import pandas as pd
-    operation = input.get("operation")
-
-    if operation == "filter_and_sort":
-        df = pd.read_json("users.json")
-        filtered = df[df["age"] > input["min_age"]]
-        sorted_df = filtered.sort_values("name")
-        sorted_df.to_json("output.json", orient="records")
-        return {"count": len(sorted_df)}
-
-    return {"error": "Unknown operation"}
+    df = pd.read_json(file)
+    filtered = df[df["age"] > min_age].sort_values("name")
+    filtered.to_json(output, orient="records")
+    return {"count": len(filtered)}
 ```
 
 **Design choices:**
 - Temperature 0.0 for deterministic data processing
-- Code Mode reduces token usage from ~100k to ~5k
 - `network = "deny"` prevents external API calls
-- Comprehensive verifier checks count, filter, and sort
+- Type hints on the function enable auto-schema extraction
 
 ---
 
@@ -225,6 +199,11 @@ def execute(input: dict) -> dict:
 name = "api-integration"
 description = "Fetch data from API and transform it"
 
+[model]
+name = "anthropic/claude-sonnet-4.6"
+temperature = 1.0
+
+[prompt]
 goal = """
 Fetch user data from the JSONPlaceholder API and create a summary.
 
@@ -237,41 +216,36 @@ Task:
 Stop once summary.json is created.
 """
 
-[model]
-name = "anthropic/claude-sonnet-4.6"
-temperature = 1.0
-max_tokens = 4000
-
 [environment]
-type = "local"
 root = "./workspace"
 
 [boundary]
 allow_write = ["summary.json"]
-network = "allow"  # Required for HTTP requests
-
-[context]
+network = "allow"
 max_tokens = 80000
 max_cost = "$1.00"
 max_steps = 10
 
 [[tool]]
 type = "shell"
-script = "./tools/http_get.sh"
+name = "http_get"
+description = "Fetch a URL and return its response body"
+command = "curl -s {url}"
+input_schema = '{"type": "object", "properties": {"url": {"type": "string"}}, "required": ["url"]}'
 
-[[verifiers]]
+[[verifier]]
 name = "output-exists"
 command = "test -f summary.json"
 trigger = "on_stop"
 description = "summary.json must exist"
 
-[[verifiers]]
+[[verifier]]
 name = "valid-json"
 command = "python -m json.tool summary.json > /dev/null"
 trigger = "on_stop"
 description = "summary.json must be valid JSON"
 
-[[verifiers]]
+[[verifier]]
 name = "schema-correct"
 command = """
 python -c "
@@ -282,7 +256,6 @@ assert isinstance(data, list), 'Data must be a list'
 assert len(data) == 10, f'Expected 10 users, got {len(data)}'
 for item in data:
     assert 'name' in item and 'email' in item, 'Each item must have name and email'
-# Check sorted
 names = [item['name'] for item in data]
 assert names == sorted(names), 'Must be sorted by name'
 print('✓ Schema and sorting correct')
@@ -292,17 +265,10 @@ trigger = "on_stop"
 description = "Data must be list of 10 objects with name/email, sorted by name"
 ```
 
-**tools/http_get.sh:**
-```bash
-#!/bin/bash
-URL="$1"
-curl -s "$URL"
-```
-
 **Design choices:**
 - `network = "allow"` explicitly enables network access
+- Shell tool uses command template `curl -s {url}` with input_schema
 - Three-layer verification: exists → valid JSON → correct schema
-- Custom HTTP tool wraps curl for simplicity
 
 ---
 
@@ -314,6 +280,11 @@ curl -s "$URL"
 name = "sales-analysis"
 description = "Process sales data with strict validation"
 
+[model]
+name = "anthropic/claude-sonnet-4.6"
+temperature = 1.0
+
+[prompt]
 goal = """
 Read sales.csv and calculate total revenue per region.
 
@@ -328,41 +299,33 @@ Output a JSON file (summary.json) with this structure:
 Stop once summary.json is created.
 """
 
-[model]
-name = "anthropic/claude-sonnet-4.6"
-temperature = 1.0
-max_tokens = 4000
-
 [environment]
-type = "local"
 root = "./workspace"
 
 [boundary]
 allow_write = ["summary.json"]
 allow_read = ["sales.csv"]
 network = "deny"
-
-[context]
 max_tokens = 80000
 max_cost = "$1.00"
 max_steps = 20
 
 # Layer 1: File exists
-[[verifiers]]
+[[verifier]]
 name = "output-exists"
 command = "test -f summary.json"
 trigger = "on_stop"
 description = "summary.json must exist"
 
 # Layer 2: Valid JSON syntax
-[[verifiers]]
+[[verifier]]
 name = "valid-json"
 command = "python -m json.tool summary.json > /dev/null"
 trigger = "on_stop"
 description = "summary.json must be valid JSON"
 
 # Layer 3: Required fields present
-[[verifiers]]
+[[verifier]]
 name = "schema-valid"
 command = """
 python -c "
@@ -378,7 +341,7 @@ trigger = "on_stop"
 description = "JSON must have all four regions: North, South, East, West"
 
 # Layer 4: Value types correct
-[[verifiers]]
+[[verifier]]
 name = "value-types"
 command = """
 python -c "
@@ -394,17 +357,15 @@ trigger = "on_stop"
 description = "All revenue values must be numeric (int or float)"
 
 # Layer 5: Data integrity
-[[verifiers]]
+[[verifier]]
 name = "data-integrity"
 command = """
 python -c "
 import json
 with open('summary.json') as f:
     data = json.load(f)
-# All revenues must be positive
 for region, revenue in data.items():
     assert revenue > 0, f'{region} revenue must be positive, got {revenue}'
-# Total should be reasonable (sanity check)
 total = sum(data.values())
 assert total > 1000, f'Total revenue {total} seems too low'
 print(f'✓ Data integrity verified. Total: {total}')
@@ -424,12 +385,17 @@ description = "All revenues must be positive and total must be > 1000"
 
 ## Recipe 6: Custom Python Tools
 
-**Use case:** Complex data analysis with custom tools.
+**Use case:** Complex data analysis with auto-schema extracted from type hints.
 
 ```toml
 name = "text-analysis"
 description = "Analyze text using custom Python tools"
 
+[model]
+name = "anthropic/claude-sonnet-4.6"
+temperature = 1.0
+
+[prompt]
 goal = """
 Analyze the file article.txt using the available analysis tools.
 
@@ -442,39 +408,30 @@ Generate a report (report.json) containing:
 Stop once report.json is created.
 """
 
-[model]
-name = "anthropic/claude-sonnet-4.6"
-temperature = 1.0
-max_tokens = 4000
-
 [environment]
-type = "local"
 root = "./workspace"
 
 [boundary]
 allow_write = ["report.json"]
 allow_read = ["article.txt"]
-
-[context]
 max_tokens = 80000
 max_cost = "$1.00"
 max_steps = 15
 
 [[tool]]
 type = "python"
-script = "./tools/text_analyzer.py"
+file = "./tools/text_analyzer.py"
+function = "analyze"
 
-[[verifiers]]
+[[verifier]]
 name = "report-valid"
 command = """
 python -c "
 import json
 with open('report.json') as f:
     report = json.load(f)
-# Check required fields
 required = ['word_count', 'sentiment', 'readability_score', 'top_keywords']
 assert all(k in report for k in required), f'Missing fields: {[k for k in required if k not in report]}'
-# Check types
 assert isinstance(report['word_count'], int), 'word_count must be int'
 assert report['sentiment'] in ['positive', 'negative', 'neutral'], 'Invalid sentiment'
 assert isinstance(report['readability_score'], (int, float)), 'readability_score must be numeric'
@@ -493,45 +450,31 @@ description = "Report must have all required fields with correct types"
 # dependencies = ["textstat"]
 # ///
 
-def execute(input: dict) -> dict:
+def analyze(text: str) -> dict:
+    """Analyze text and return word count, sentiment, readability, and top keywords."""
     import textstat
     from collections import Counter
     import re
 
-    operation = input.get("operation")
-    text = input.get("text", "")
+    words = re.findall(r'\w+', text.lower())
+    positive_words = {"good", "great", "excellent", "happy"}
+    negative_words = {"bad", "terrible", "sad", "awful"}
+    pos_count = sum(1 for w in words if w in positive_words)
+    neg_count = sum(1 for w in words if w in negative_words)
+    sentiment = "positive" if pos_count > neg_count else "negative" if neg_count > pos_count else "neutral"
+    top_keywords = [word for word, _ in Counter(words).most_common(5)]
 
-    if operation == "analyze":
-        words = re.findall(r'\w+', text.lower())
-        word_count = len(words)
-
-        # Simple sentiment
-        positive_words = ["good", "great", "excellent", "happy"]
-        negative_words = ["bad", "terrible", "sad", "awful"]
-        pos_count = sum(1 for w in words if w in positive_words)
-        neg_count = sum(1 for w in words if w in negative_words)
-        sentiment = "positive" if pos_count > neg_count else "negative" if neg_count > pos_count else "neutral"
-
-        # Readability
-        readability = textstat.flesch_reading_ease(text)
-
-        # Keywords
-        word_freq = Counter(words)
-        top_keywords = [word for word, _ in word_freq.most_common(5)]
-
-        return {
-            "word_count": word_count,
-            "sentiment": sentiment,
-            "readability_score": readability,
-            "top_keywords": top_keywords
-        }
-
-    return {"error": "Unknown operation"}
+    return {
+        "word_count": len(words),
+        "sentiment": sentiment,
+        "readability_score": textstat.flesch_reading_ease(text),
+        "top_keywords": top_keywords
+    }
 ```
 
 **Design choices:**
-- Custom tool encapsulates complex analysis logic
-- PEP 723 dependencies (textstat) installed automatically
+- Type hints on `analyze(text: str) -> dict` enable auto-schema extraction
+- PEP 723 dependencies (`textstat`) installed automatically
 - Single comprehensive verifier checks all fields
 
 ---
@@ -544,6 +487,11 @@ def execute(input: dict) -> dict:
 name = "mcp-file-ops"
 description = "File operations using MCP server"
 
+[model]
+name = "anthropic/claude-sonnet-4.6"
+temperature = 1.0
+
+[prompt]
 goal = """
 Using the filesystem MCP server, perform these operations:
 
@@ -557,19 +505,11 @@ Using the filesystem MCP server, perform these operations:
 Stop once summary.json is created.
 """
 
-[model]
-name = "anthropic/claude-sonnet-4.6"
-temperature = 1.0
-max_tokens = 4000
-
 [environment]
-type = "local"
 root = "./workspace"
 
 [boundary]
 allow_write = ["summary.json"]
-
-[context]
 max_tokens = 80000
 max_cost = "$1.00"
 max_steps = 20
@@ -581,7 +521,7 @@ command = "npx"
 args = ["-y", "@modelcontextprotocol/server-filesystem", "/workspace"]
 transport = "stdio"
 
-[[verifiers]]
+[[verifier]]
 name = "summary-correct"
 command = """
 python -c "
@@ -601,12 +541,6 @@ trigger = "on_stop"
 description = "Summary must be a list of file stats"
 ```
 
-**Design choices:**
-- Uses official MCP filesystem server
-- Agent gets standard file operations (list, read, write)
-- No custom tool code needed
-- MCP server handles all file I/O
-
 ---
 
 ## Recipe 8: Research Task
@@ -617,6 +551,11 @@ description = "Summary must be a list of file stats"
 name = "research-task"
 description = "Research and document findings"
 
+[model]
+name = "anthropic/claude-sonnet-4.6"
+temperature = 0.5
+
+[prompt]
 goal = """
 Research the codebase and answer these questions:
 
@@ -626,37 +565,28 @@ Research the codebase and answer these questions:
 4. What testing framework is used?
 
 Create a report (RESEARCH.md) with your findings in markdown format.
-
 Use headings for each question, and provide specific file names and line numbers where relevant.
 
 Stop once RESEARCH.md is created.
 """
 
-[model]
-name = "anthropic/claude-sonnet-4.6"
-temperature = 0.5  # Lower temperature for factual research
-max_tokens = 4000
-
 [environment]
-type = "local"
 root = "./workspace"
 
 [boundary]
 allow_write = ["RESEARCH.md"]
-allow_read = ["**/*"]  # Can read any file for research
-
-[context]
-max_tokens = 100000  # Higher budget for exploration
+allow_read = ["**/*"]
+max_tokens = 100000
 max_cost = "$2.00"
 max_steps = 30
 
-[[verifiers]]
+[[verifier]]
 name = "report-exists"
 command = "test -f RESEARCH.md"
 trigger = "on_stop"
 description = "RESEARCH.md must exist"
 
-[[verifiers]]
+[[verifier]]
 name = "report-complete"
 command = """
 grep -q '## What files exist' RESEARCH.md && \
@@ -681,38 +611,46 @@ description = "Report must have all four required sections"
 ### Pattern: File Existence → Validation → Correctness
 
 ```toml
-[[verifiers]]
+[[verifier]]
 name = "exists"
 command = "test -f output.json"
-# ...
+trigger = "on_stop"
+description = "output.json must exist"
 
-[[verifiers]]
+[[verifier]]
 name = "valid-format"
 command = "python -m json.tool output.json > /dev/null"
-# ...
+trigger = "on_stop"
+description = "output.json must be valid JSON"
 
-[[verifiers]]
+[[verifier]]
 name = "correct-data"
 command = "./validate_data.sh"
-# ...
+trigger = "on_stop"
+description = "Data must match expected schema"
 ```
 
 ### Pattern: Re-observation for Long Tasks
 
 ```toml
+[prompt]
+goal = "..."
 re_observation = [
     "ls -1 *.py 2>/dev/null | cat",
     "git status --short"
 ]
 ```
 
-### Pattern: Scoped Boundaries
+### Pattern: Scoped Boundaries with Budget
 
 ```toml
 [boundary]
-allow_write = ["output/*", "logs/*.txt"]  # Specific paths only
-allow_read = ["data/*.csv"]               # Input data only
-network = "deny"                          # No external access
+allow_write = ["output/*", "logs/*.txt"]
+allow_read = ["data/*.csv"]
+network = "deny"
+max_tokens = 100000
+max_cost = "$1.00"
+max_steps = 20
 ```
 
 ### Pattern: Token Budget for Task Complexity

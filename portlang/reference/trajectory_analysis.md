@@ -490,7 +490,7 @@ for name, stats in verifier_stats.items():
 portlang converge field.toml -n 5
 
 # Identify divergent runs
-portlang list --field code-task
+portlang list code-task
 
 # Compare successful vs failed
 portlang diff abc123 def456

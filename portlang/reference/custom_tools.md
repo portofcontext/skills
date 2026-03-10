@@ -19,176 +19,124 @@ portlang supports three types of custom tools: Shell, Python, and MCP servers. T
 
 ### Basic Structure
 
-Shell tools receive parameters as command-line arguments and output JSON to stdout.
+Shell tools use a **command template** where `{param}` placeholders are substituted with agent-provided values. Output goes to stdout.
 
 **Definition in field.toml:**
 ```toml
 [[tool]]
 type = "shell"
-script = "./tools/word_count.sh"
-```
-
-**Script format (tools/word_count.sh):**
-```bash
-#!/bin/bash
-# Tool: word_count
-# Description: Count words in a file
-# Input: file (string)
-# Output: {"count": number}
-
-set -e  # Exit on error
-
-FILE="$1"
-
-if [ ! -f "$FILE" ]; then
-    echo "{\"error\": \"File not found: $FILE\"}"
-    exit 1
-fi
-
-COUNT=$(wc -w "$FILE" | awk '{print $1}')
-echo "{\"count\": $COUNT}"
-```
-
-**Make executable:**
-```bash
-chmod +x tools/word_count.sh
+name = "word_count"
+description = "Count words in a file"
+command = "wc -w {file}"
+input_schema = '{"type": "object", "properties": {"file": {"type": "string"}}, "required": ["file"]}'
 ```
 
 **Agent usage:**
 ```
 Agent calls: word_count({"file": "data.txt"})
-Runtime executes: ./tools/word_count.sh data.txt
-Output: {"count": 1234}
+Runtime executes: wc -w data.txt
+Output: 1234 data.txt
 ```
 
-### Parameter Handling
+For more complex logic, point the command at a script:
 
-Multiple parameters are passed as separate arguments:
-
-**Script:**
+**tools/word_count.sh:**
 ```bash
 #!/bin/bash
-# Tool: file_copy
-# Input: source (string), destination (string)
-# Output: {"success": boolean}
-
-SOURCE="$1"
-DEST="$2"
-
-if [ ! -f "$SOURCE" ]; then
-    echo "{\"error\": \"Source file not found\", \"success\": false}"
-    exit 1
-fi
-
-cp "$SOURCE" "$DEST"
-echo "{\"success\": true, \"destination\": \"$DEST\"}"
-```
-
-### Error Handling
-
-Always handle errors and return valid JSON:
-
-```bash
-#!/bin/bash
-# Tool: grep_wrapper
-# Input: pattern (string), file (string)
-# Output: {"matches": array, "count": number}
-
-PATTERN="$1"
-FILE="$2"
-
-# Validate inputs
-if [ -z "$PATTERN" ]; then
-    echo "{\"error\": \"Pattern cannot be empty\", \"matches\": [], \"count\": 0}"
-    exit 1
-fi
-
+set -e
+FILE="$1"
 if [ ! -f "$FILE" ]; then
-    echo "{\"error\": \"File not found\", \"matches\": [], \"count\": 0}"
+    echo "{\"error\": \"File not found: $FILE\"}"
     exit 1
 fi
+COUNT=$(wc -w "$FILE" | awk '{print $1}')
+echo "{\"count\": $COUNT}"
+```
 
-# Perform grep (|| true to not fail if no matches)
-MATCHES=$(grep "$PATTERN" "$FILE" || true)
+```toml
+[[tool]]
+type = "shell"
+name = "word_count"
+description = "Count words in a file and return JSON"
+command = "./tools/word_count.sh {file}"
+input_schema = '{"type": "object", "properties": {"file": {"type": "string"}}, "required": ["file"]}'
+```
 
-if [ -z "$MATCHES" ]; then
-    echo "{\"matches\": [], \"count\": 0}"
-else
-    # Convert matches to JSON array
-    JSON_MATCHES=$(echo "$MATCHES" | jq -R . | jq -s .)
-    COUNT=$(echo "$MATCHES" | wc -l | tr -d ' ')
-    echo "{\"matches\": $JSON_MATCHES, \"count\": $COUNT}"
-fi
+### Multi-Parameter Tools
+
+```toml
+[[tool]]
+type = "shell"
+name = "file_copy"
+description = "Copy a file to a new location"
+command = "cp {source} {destination} && echo '{\"success\": true}'"
+input_schema = '{"type": "object", "properties": {"source": {"type": "string"}, "destination": {"type": "string"}}, "required": ["source", "destination"]}'
 ```
 
 ### Complex Example: HTTP Request Tool
 
+```toml
+[[tool]]
+type = "shell"
+name = "http_get"
+description = "Fetch a URL and return the response body"
+command = "curl -s {url}"
+input_schema = '{"type": "object", "properties": {"url": {"type": "string"}}, "required": ["url"]}'
+```
+
+For richer output (status code + body), use a script:
+
 ```bash
 #!/bin/bash
-# Tool: http_get
-# Input: url (string), headers (object, optional)
-# Output: {"status": number, "body": string}
-
+# tools/http_get.sh
 URL="$1"
-HEADERS="${2:-{}}"  # Default to empty object if not provided
-
-# Basic validation
-if [ -z "$URL" ]; then
-    echo "{\"error\": \"URL required\", \"status\": 0, \"body\": \"\"}"
-    exit 1
-fi
-
-# Make request (using curl)
 RESPONSE=$(curl -s -w "\n%{http_code}" "$URL")
 BODY=$(echo "$RESPONSE" | head -n -1)
 STATUS=$(echo "$RESPONSE" | tail -n 1)
-
-# Escape body for JSON
 ESCAPED_BODY=$(echo "$BODY" | jq -Rs .)
-
 echo "{\"status\": $STATUS, \"body\": $ESCAPED_BODY}"
+```
+
+```toml
+[[tool]]
+type = "shell"
+name = "http_get"
+description = "Fetch URL, returns status and body"
+command = "./tools/http_get.sh {url}"
+input_schema = '{"type": "object", "properties": {"url": {"type": "string"}}, "required": ["url"]}'
 ```
 
 ## Python Tools
 
 ### Basic Structure
 
-Python tools must have an `execute(input: dict) -> dict` function.
+Python tools are functions with typed parameters. portlang auto-extracts the JSON schema from type hints; no manual schema definition needed.
 
 **Definition in field.toml:**
 ```toml
 [[tool]]
 type = "python"
-script = "./tools/analyzer.py"
+file = "./tools/analyzer.py"
+function = "analyze_text"  # omit to expose all functions
 ```
 
-**Script format (tools/analyzer.py):**
+**tools/analyzer.py:**
 ```python
 #!/usr/bin/env python3
 # /// script
 # dependencies = []
 # ///
 
-def execute(input: dict) -> dict:
-    """
-    Analyze text and return statistics.
-
-    Input: {"text": "string"}
-    Output: {"word_count": int, "char_count": int, "avg_word_length": float}
-    """
-    text = input.get("text", "")
-
+def analyze_text(text: str) -> dict:
+    """Analyze text and return word count, character count, and average word length."""
     if not text:
         return {"error": "Text cannot be empty"}
-
     words = text.split()
     word_count = len(words)
-    char_count = len(text)
     avg_word_length = sum(len(w) for w in words) / word_count if word_count > 0 else 0
-
     return {
         "word_count": word_count,
-        "char_count": char_count,
+        "char_count": len(text),
         "avg_word_length": round(avg_word_length, 2)
     }
 ```
@@ -203,18 +151,12 @@ For tools requiring external libraries, use PEP 723 format:
 # dependencies = [
 #   "pandas>=2.0.0",
 #   "numpy>=1.24.0",
-#   "requests>=2.31.0",
 # ]
 # ///
 
-def execute(input: dict) -> dict:
-    """Data processor with external dependencies."""
-    import pandas as pd
+def compute_stats(operation: str, data: list) -> dict:
+    """Compute mean or median of a list of numbers."""
     import numpy as np
-
-    operation = input.get("operation")
-    data = input.get("data", [])
-
     if operation == "mean":
         return {"result": float(np.mean(data))}
     elif operation == "median":
@@ -237,47 +179,16 @@ def execute(input: dict) -> dict:
 # dependencies = ["pandas"]
 # ///
 
-def execute(input: dict) -> dict:
-    """
-    Load and filter CSV data.
-
-    Input: {
-        "file": "string",
-        "filter_column": "string",
-        "filter_value": any,
-        "output": "string"
-    }
-    Output: {"rows_filtered": int, "output_file": string}
-    """
+def filter_csv(file: str, filter_column: str, filter_value: str, output: str) -> dict:
+    """Filter a CSV file by column value and save to output path."""
     import pandas as pd
-
     try:
-        file_path = input.get("file")
-        filter_col = input.get("filter_column")
-        filter_val = input.get("filter_value")
-        output_path = input.get("output")
-
-        # Validate inputs
-        if not all([file_path, filter_col, output_path]):
-            return {"error": "Missing required parameters"}
-
-        # Load data
-        df = pd.read_csv(file_path)
-
-        # Filter
-        if filter_col in df.columns:
-            filtered_df = df[df[filter_col] == filter_val]
-        else:
-            return {"error": f"Column {filter_col} not found"}
-
-        # Save
-        filtered_df.to_csv(output_path, index=False)
-
-        return {
-            "rows_filtered": len(filtered_df),
-            "output_file": output_path
-        }
-
+        df = pd.read_csv(file)
+        if filter_column not in df.columns:
+            return {"error": f"Column {filter_column} not found"}
+        filtered = df[df[filter_column] == filter_value]
+        filtered.to_csv(output, index=False)
+        return {"rows_filtered": len(filtered), "output_file": output}
     except Exception as e:
         return {"error": str(e)}
 ```
@@ -290,71 +201,35 @@ def execute(input: dict) -> dict:
 # dependencies = ["jsonschema"]
 # ///
 
-def execute(input: dict) -> dict:
-    """
-    Validate JSON against a schema.
-
-    Input: {
-        "data": object,
-        "schema": object
-    }
-    Output: {"valid": bool, "errors": array}
-    """
+def validate_schema(data: dict, schema: dict) -> dict:
+    """Validate a JSON object against a JSON schema."""
     from jsonschema import validate, ValidationError
-
-    data = input.get("data")
-    schema = input.get("schema")
-
-    if not data or not schema:
-        return {"error": "Both data and schema required"}
-
     try:
         validate(instance=data, schema=schema)
         return {"valid": True, "errors": []}
     except ValidationError as e:
-        return {
-            "valid": False,
-            "errors": [str(e)]
-        }
+        return {"valid": False, "errors": [str(e)]}
 ```
 
 ### Error Handling Best Practices
 
+Use typed parameters — portlang validates inputs before calling the function. Handle exceptions and always return a dict:
+
 ```python
 #!/usr/bin/env python3
 
-def execute(input: dict) -> dict:
-    """Template with comprehensive error handling."""
+def process_file(path: str, mode: str) -> dict:
+    """Process a file in the given mode ('count' or 'summarize')."""
     try:
-        # Validate required parameters
-        required = ["param1", "param2"]
-        missing = [p for p in required if p not in input]
-        if missing:
-            return {
-                "error": f"Missing required parameters: {', '.join(missing)}",
-                "success": False
-            }
-
-        # Validate types
-        if not isinstance(input["param1"], str):
-            return {"error": "param1 must be a string", "success": False}
-
-        # Validate values
-        if input["param2"] < 0:
-            return {"error": "param2 must be non-negative", "success": False}
-
-        # Perform operation
-        result = do_something(input["param1"], input["param2"])
-
-        return {
-            "success": True,
-            "result": result
-        }
-
+        if mode not in ("count", "summarize"):
+            return {"error": f"Unknown mode: {mode}", "success": False}
+        with open(path) as f:
+            content = f.read()
+        if mode == "count":
+            return {"success": True, "result": len(content.split())}
+        return {"success": True, "result": content[:200]}
     except FileNotFoundError as e:
         return {"error": f"File not found: {e.filename}", "success": False}
-    except PermissionError:
-        return {"error": "Permission denied", "success": False}
     except Exception as e:
         return {"error": f"Unexpected error: {str(e)}", "success": False}
 ```
@@ -452,13 +327,11 @@ npx -y @modelcontextprotocol/server-filesystem /workspace
 # Server should output JSON describing available tools
 ```
 
-**Check portlang logs:**
+**Check portlang output:**
 
 ```bash
-# Run with verbose logging
-portlang run field.toml --verbose
-
-# Look for MCP connection messages:
+portlang run field.toml
+# Look for MCP connection messages in output:
 # "MCP server started: filesystem"
 # "Available tools: [read_file, write_file, ...]"
 ```
@@ -581,8 +454,8 @@ transport = "stdio"
 ```bash
 # Run with test input
 python -c "
-from tools.analyzer import execute
-result = execute({'text': 'hello world'})
+from tools.analyzer import analyze_text
+result = analyze_text('hello world')
 print(result)
 "
 
