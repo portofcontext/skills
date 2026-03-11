@@ -4,7 +4,7 @@ description: "portlang - the environment-first agent framework. Use when creatin
 license: MIT
 metadata:
   author: portofcontext
-  version: 1.2.2
+  version: 1.2.3
 ---
 
 # portlang Skill
@@ -78,7 +78,7 @@ max_steps = 30          # hard ceiling on agent steps
 
 tools = "inherit"       # optional; inherit [[tool]] list from parent instead of defining inline
 
-[[tool]]                # repeatable; type = "python" | "shell" | "mcp"
+[[tool]]                # repeatable; type = "python" | "shell" | "mcp"; bash/glob/write are built-in defaults
 
 # Shell verifier (default when type is omitted):
 [[verifier]]
@@ -343,6 +343,13 @@ image = "myregistry/myimage:latest"
 ```
 
 ### 8. Custom Tools
+
+**Default tools (always available, no `[[tool]]` entry needed):**
+- `bash` — run shell commands in the container
+- `glob` — find files by pattern
+- `write` — write files to allowed paths
+
+Define `[[tool]]` entries only to add capabilities beyond these three.
 
 **Shell tool:**
 ```toml
