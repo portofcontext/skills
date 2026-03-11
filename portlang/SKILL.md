@@ -47,13 +47,13 @@ Before running portlang fields:
 
 ## field.toml Structure
 
-All sections are optional unless marked (required).
+All sections are optional unless marked (required). Fields marked `"inherit"` pull their value from a parent `field.toml` one directory up (auto-detected if `../field.toml` exists).
 
 ```toml
 name = "my-task"        # (required) identifier, used in trajectory storage
 description = "..."     # human-readable summary
 
-[model]                 # (required)
+[model]                 # (required), or: model = "inherit"
 name = "anthropic/claude-sonnet-4.6"  # (required)
 temperature = 0.5       # default: 0.5
 
@@ -68,20 +68,49 @@ packages = ["nodejs"]   # apt packages to install; list "uv" to get uv/pip
 dockerfile = "./Dockerfile"  # custom Dockerfile (overrides packages)
 image = "custom:tag"    # pre-built image (overrides dockerfile)
 
-[boundary]              # optional
+[boundary]              # optional, or: boundary = "inherit"
 allow_write = ["*.py"]  # glob patterns for writable paths; default: none
 network = "deny"        # "deny" | "allow"; default: allow
 max_tokens = 150000     # hard ceiling on total context tokens
 max_cost = "$2.00"      # hard ceiling on total cost
 max_steps = 30          # hard ceiling on agent steps
 
-[[verifier]]            # repeatable; zero or more
+tools = "inherit"       # optional; inherit [[tool]] list from parent instead of defining inline
+
+[[tool]]                # repeatable; type = "python" | "shell" | "mcp"
+
+# Shell verifier (default when type is omitted):
+[[verifier]]
+type = "shell"          # default; type can be omitted for shell verifiers
 name = "..."            # (required)
-command = "..."         # (required) exit 0 = pass, nonzero = fail
+command = "..."         # shell command; exit 0 = pass, nonzero = fail
 trigger = "on_stop"     # "on_stop" | "always" | "on_write"; default: on_stop
 description = "..."     # injected into context on failure
 
-[[tool]]                # repeatable; type = "python" | "shell" | "mcp"
+# Levenshtein verifier (normalized edit distance):
+[[verifier]]
+type = "levenshtein"
+name = "..."
+file = "output.txt"     # workspace-relative path to actual output
+expected = "..."        # reference string to compare against
+threshold = 0.9         # similarity [0.0–1.0] required to pass; default: 1.0
+
+# JSON structure verifier:
+[[verifier]]
+type = "json"
+name = "..."
+file = "output.json"    # workspace-relative path to validate
+schema = '{"type": "object"}'  # optional JSON Schema string
+
+# Semantic similarity verifier (cosine via embeddings):
+[[verifier]]
+type = "semantic"
+name = "..."
+file = "output.txt"
+expected = "..."        # reference string to embed and compare
+threshold = 0.85        # cosine similarity [0.0–1.0]; default: 0.8
+embedding_model = "bge-small-en-v1.5"  # local model (~67 MB, downloaded once)
+# embedding_url = "https://..."  # use OpenAI-compatible endpoint instead
 
 [output_schema]         # optional; native TOML — JSON schema for structured output
 ```
@@ -136,7 +165,43 @@ Add `--html` to `replay`/`diff` for HTML output. Add `--no-open` to any `view` c
 
 ## Key Patterns
 
-### 1. Structured Output (agent produces validated JSON)
+### 1. Field Inheritance (shared model/boundary/tools across a suite)
+
+If `../field.toml` exists, a child field can inherit from it automatically:
+
+```toml
+# parent/field.toml — shared config for all child fields
+name = "parent"
+
+[model]
+name = "anthropic/claude-sonnet-4.6"
+temperature = 0.5
+
+[boundary]
+network = "deny"
+max_tokens = 100000
+max_cost = "$1.00"
+max_steps = 20
+
+[[tool]]
+type = "python"
+file = "./tools/shared_utils.py"
+```
+
+```toml
+# parent/task-a/field.toml — inherits model, boundary, and tools
+name = "task-a"
+model = "inherit"
+boundary = "inherit"
+tools = "inherit"
+
+[prompt]
+goal = "Do task A using the shared tools."
+```
+
+Inheritance eliminates duplication across eval suites. Override any section by defining it inline.
+
+### 2. Structured Output (agent produces validated JSON)
 
 Define the schema as native TOML under `[output_schema]`:
 
@@ -178,7 +243,7 @@ description = "Status must be success"
 
 The agent writes `output.json` to `/workspace`. Schema violations are reported as failures.
 
-### 2. Multi-Layer Verifiers (fail fast with precise feedback)
+### 3. Multi-Layer Verifiers (fail fast with precise feedback)
 
 ```toml
 [[verifier]]
@@ -202,7 +267,44 @@ description = "Must match schema"
 
 Verifiers run in order, stop on first failure.
 
-### 3. Scoped Boundaries
+### 4. Smart Verifier Types
+
+Use typed verifiers instead of shell scripts where possible:
+
+```toml
+# JSON structure check (no jq needed)
+[[verifier]]
+type = "json"
+name = "valid-schema"
+file = "output.json"
+schema = '{"type": "object", "required": ["status", "count"]}'
+trigger = "on_stop"
+description = "output.json must match schema"
+
+# Fuzzy text match (tolerates minor differences)
+[[verifier]]
+type = "levenshtein"
+name = "close-enough"
+file = "output.txt"
+expected = "The answer is 42."
+threshold = 0.9
+trigger = "on_stop"
+description = "Output must be at least 90% similar to expected"
+
+# Semantic match (meaning, not exact text)
+[[verifier]]
+type = "semantic"
+name = "right-idea"
+file = "summary.txt"
+expected = "The model achieved high accuracy on the test set."
+threshold = 0.85
+trigger = "on_stop"
+description = "Summary must convey the correct conclusion"
+```
+
+Local embedding model downloaded automatically (~67 MB, no API key required).
+
+### 5. Scoped Boundaries
 
 ```toml
 [boundary]
@@ -213,7 +315,7 @@ max_cost = "$1.00"
 max_steps = 20
 ```
 
-### 4. Re-observation (keep context fresh)
+### 6. Re-observation (keep context fresh)
 
 ```toml
 [prompt]
@@ -226,7 +328,7 @@ re_observation = [
 
 Commands run before each agent step, injecting fresh state into context.
 
-### 5. Custom Environment
+### 7. Custom Environment
 
 ```toml
 [environment]
@@ -240,7 +342,7 @@ dockerfile = "./Dockerfile"
 image = "myregistry/myimage:latest"
 ```
 
-### 6. Custom Tools
+### 8. Custom Tools
 
 **Shell tool:**
 ```toml
@@ -287,7 +389,7 @@ transport = "http"
 headers = { Authorization = "Bearer ${STRIPE_KEY}" }
 ```
 
-### 7. Batch Evaluation
+### 9. Batch Evaluation
 
 ```bash
 portlang eval ./examples/

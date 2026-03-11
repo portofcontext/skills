@@ -1,6 +1,19 @@
 # Verifier Patterns
 
-This guide contains 20 real-world verifier examples for common portlang tasks.
+This guide contains real-world verifier examples for common portlang tasks.
+
+## Verifier Types
+
+portlang supports four verifier types. `type` is optional and defaults to `"shell"`.
+
+| Type | Use when | Key fields |
+|------|----------|-----------|
+| `shell` | Custom logic, running tests, git checks | `command` |
+| `json` | Validating JSON structure/schema | `file`, `schema` |
+| `levenshtein` | Fuzzy text match (tolerates typos/formatting) | `file`, `expected`, `threshold` |
+| `semantic` | Meaning-based match (paraphrase tolerance) | `file`, `expected`, `threshold`, `embedding_model` |
+
+All types share: `name` (required), `trigger` (`on_stop`/`always`/`on_write`), `description`.
 
 ## Core Concept
 
@@ -380,6 +393,112 @@ print('✓ No duplicates')
 """
 trigger = "on_stop"
 description = "No duplicate URLs in scraped data"
+```
+
+## JSON, Levenshtein, and Semantic Verifiers
+
+### 21. JSON Structure Validation (no jq/python needed)
+
+```toml
+[[verifier]]
+type = "json"
+name = "valid-schema"
+file = "output.json"
+schema = '{"type": "object", "required": ["status", "count", "items"], "properties": {"status": {"type": "string", "enum": ["ok", "error"]}, "count": {"type": "integer"}, "items": {"type": "array"}}}'
+trigger = "on_stop"
+description = "output.json must match required schema"
+```
+
+Omit `schema` to simply check the file contains valid JSON:
+```toml
+[[verifier]]
+type = "json"
+name = "valid-json"
+file = "output.json"
+trigger = "on_stop"
+description = "output.json must be valid JSON"
+```
+
+### 22. Levenshtein (fuzzy text match)
+
+Use when exact string match is too strict — tolerates whitespace, punctuation, or minor wording differences.
+
+```toml
+[[verifier]]
+type = "levenshtein"
+name = "output-close"
+file = "answer.txt"
+expected = "The capital of France is Paris."
+threshold = 0.9
+trigger = "on_stop"
+description = "Answer must be at least 90% similar to expected text"
+```
+
+`threshold = 1.0` (default) requires exact match. Lower values allow more variation.
+
+### 23. Semantic Similarity
+
+Use when the agent should convey the right *meaning* without using the exact same words.
+
+```toml
+[[verifier]]
+type = "semantic"
+name = "correct-conclusion"
+file = "summary.txt"
+expected = "The experiment demonstrates that the treatment significantly reduced symptoms."
+threshold = 0.85
+trigger = "on_stop"
+description = "Summary must convey the correct experimental conclusion"
+```
+
+**Available embedding models** (downloaded from HuggingFace on first use, no API key):
+- `bge-small-en-v1.5` (default, ~67 MB)
+- `all-minilm-l6-v2`
+- `nomic-embed-text-v1.5`
+
+**Use an OpenAI-compatible endpoint instead:**
+```toml
+[[verifier]]
+type = "semantic"
+name = "meaning-check"
+file = "output.txt"
+expected = "Revenue increased by approximately 15% year-over-year."
+threshold = 0.88
+embedding_url = "https://api.openai.com/v1/embeddings"
+trigger = "on_stop"
+description = "Output must match the expected financial finding"
+```
+Reads `EMBEDDING_API_KEY` or `OPENAI_API_KEY` from the environment.
+
+### 24. Combining Typed Verifiers (progressive pipeline)
+
+```toml
+# Layer 1: File is valid JSON
+[[verifier]]
+type = "json"
+name = "valid-json"
+file = "report.json"
+trigger = "on_stop"
+description = "report.json must be valid JSON"
+
+# Layer 2: JSON matches required schema
+[[verifier]]
+type = "json"
+name = "schema-check"
+file = "report.json"
+schema = '{"type": "object", "required": ["title", "body", "score"]}'
+trigger = "on_stop"
+description = "report.json must have title, body, and score fields"
+
+# Layer 3: The written content conveys the right meaning
+[[verifier]]
+type = "semantic"
+name = "correct-meaning"
+file = "report.json"
+expected = "The analysis found strong positive correlation between variables."
+threshold = 0.8
+trigger = "on_stop"
+description = "Report must convey the correct statistical finding"
 ```
 
 ## Best Practices Summary
