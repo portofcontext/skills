@@ -1,10 +1,10 @@
 ---
 name: portlang
-description: "Master portlang - the environment-first agent framework. Use when creating field.toml files, defining boundaries and verifiers, adding custom tools (shell, Python, MCP), debugging trajectories, measuring convergence, configuring structured JSON output with output_schema, running batch evals, viewing HTML trajectory dashboards, or analyzing agent behavior across runs. portlang manages environments not loops - you define the search space, the agent finds the path."
+description: "portlang - the environment-first agent framework. Use when creating field.toml files, defining boundaries and verifiers, adding custom tools (shell, Python, MCP), debugging trajectories, measuring convergence, configuring structured JSON output with output_schema, running batch evals, viewing HTML trajectory dashboards, or analyzing agent behavior across runs. portlang manages environments not loops - you define the search space, the agent finds the path."
 license: MIT
 metadata:
   author: portofcontext
-  version: 1.2.0
+  version: 1.2.1
 ---
 
 # portlang Skill
@@ -21,28 +21,29 @@ The runtime executes the search. Every run produces a **trajectory** (complete e
 
 ## Prerequisites
 
+portlang currently only runs on apple devices.
 Before running portlang fields:
 
 1. **Install portlang:**
-   ```bash
-   git clone https://github.com/portofcontext/portlang
-   cd portlang && cargo build --release
-   ```
+```bash
+brew tap portofcontext/homebrew-tap
+brew install portlang
+```
 
 2. **Set API key** (choose one):
-   ```bash
-   export ANTHROPIC_API_KEY=sk-ant-...
-   export OPENROUTER_API_KEY=sk-or-v1-...
-   ```
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...
+export OPENROUTER_API_KEY=sk-or-v1-...
+```
 
 3. **Verify installation:**
-   ```bash
-   portlang init  # Check container support (macOS only)
-   ```
+```bash
+portlang init  # Check container support 
+```
 
 **Model naming by provider:**
 - Anthropic API: `anthropic/claude-sonnet-4.6`, `anthropic/claude-opus-4.5`
-- OpenRouter: `anthropic/claude-3.5-sonnet`, `anthropic/claude-3-opus`
+- OpenRouter: `anthropic/claude-3.5-sonnet`, `anthropic/claude-3-opus`, anything on openrouter that support tool calling
 - Provider auto-detected from API key
 
 ## field.toml Structure
@@ -145,7 +146,7 @@ description = "Must print 'Hello, World!'"
 ## Essential Commands
 
 ```bash
-portlang new field.toml              # Scaffold a new field.toml interactively
+portlang new field.toml              # Scaffold a new field.toml using the flags to configure
 portlang run field.toml              # Execute once
 portlang check field.toml            # Validate configuration
 portlang converge field.toml -n 10   # Run N times, measure reliability
@@ -158,7 +159,6 @@ portlang view trajectory <id>        # Open trajectory as interactive HTML
 portlang view eval ./examples/       # Open eval results dashboard
 portlang view diff <id-a> <id-b>     # Open trajectory comparison HTML
 portlang view field <field-name>     # Open field adaptation report HTML
-portlang docs                        # Print full CLI reference as Markdown
 ```
 
 Add `--html` to `replay`/`diff` for HTML output. Add `--no-open` to any `view` command to skip opening the browser. See **reference/CLI.md** for full flag details.
