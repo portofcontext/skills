@@ -4,7 +4,7 @@ description: "portlang - the environment-first agent framework. Use when creatin
 license: MIT
 metadata:
   author: portofcontext
-  version: 1.2.3
+  version: 1.2.4
 ---
 
 # portlang Skill
@@ -269,7 +269,7 @@ Verifiers run in order, stop on first failure.
 
 ### 4. Smart Verifier Types
 
-Use typed verifiers instead of shell scripts where possible:
+**Prefer typed verifiers.** They run in the portlang runtime — no packages required, no container dependencies. Fall back to shell verifiers only for logic that can't be expressed with a typed verifier, and only use tools guaranteed in the container baseline (see section 7).
 
 ```toml
 # JSON structure check (no jq needed)
@@ -341,6 +341,10 @@ dockerfile = "./Dockerfile"
 # Or a pre-built image:
 image = "myregistry/myimage:latest"
 ```
+
+**Default container baseline:** The container is minimal. Available by default: standard POSIX shell builtins, `bash`, `curl`, `wc`, `grep`, `cat`, `ls`, `find`. **Not available** unless added to `packages` or a custom image: `python3`, `node`, `jq`, `git`, and most other tools.
+
+Shell verifiers run inside the container and are subject to the same constraints. **Prefer typed verifiers** (`type = "json"`, `"levenshtein"`, `"semantic"`) over shell verifiers whenever possible — they run natively in the portlang runtime and require nothing installed. Only use shell verifiers for checks that require container-side execution, and only invoke tools you've declared in `packages`.
 
 ### 8. Custom Tools
 
