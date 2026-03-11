@@ -4,7 +4,7 @@ description: "portlang - the environment-first agent framework. Use when creatin
 license: MIT
 metadata:
   author: portofcontext
-  version: 1.2.1
+  version: 1.2.2
 ---
 
 # portlang Skill
@@ -357,6 +357,11 @@ input_schema = '{"type": "object", "properties": {"path": {"type": "string"}}, "
 **Python tool (auto-schema from type hints):**
 ```python
 # tools/calculator.py
+# /// script
+# dependencies = [requests]
+# ///
+# uv auto-installs dependencies — no packages needed in field.toml
+
 def execute(expression: str) -> dict:
     """Evaluate a math expression and return the result."""
     return {"result": eval(expression)}
@@ -365,9 +370,16 @@ def execute(expression: str) -> dict:
 ```toml
 [[tool]]
 type = "python"
-file = "./tools/calculator.py"
+file = "./tools/calculator.py"   # relative to field.toml, not workspace
 function = "execute"  # schema auto-extracted from type hints; omit to expose all functions
 ```
+
+> **Python tool rules:**
+> - Each tool file runs in isolation — tool files cannot import each other. Put all related logic in one file.
+> - Declare third-party dependencies with a `# /// script` PEP 723 block at the top; `uv` installs them automatically.
+> - File paths in `file =` are relative to `field.toml`, not the workspace root.
+
+**Tool-first design for complex tasks:** For tasks involving multi-step API calls, data aggregation, or web scraping, write Python tools that encapsulate that logic before writing the field. The agent's `goal` should then be: call the tool, write the output file. This keeps steps under 5, cost under $0.05, and `allow_write` naturally minimal. Agents that try to do complex work through raw shell commands (curl pipes, temp files, bash scripts) burn budget and fail more often.
 
 **MCP server (stdio):**
 ```toml
@@ -410,9 +422,11 @@ Useful for regression testing after changes.
 ## Common Issues
 
 **Budget exhausted:**
+- Start conservative: `max_cost = "$0.25"` for simple tasks, `$1.00` for network-heavy tasks; increase after profiling
 - Increase `max_tokens` or reduce `max_steps` in `[boundary]`
 - Simplify `re_observation` commands
 - Check for tool error loops
+- Move complex logic into Python tools so the agent does orchestration, not implementation
 
 **Low convergence rate (<70%):**
 - Strengthen verifiers (make expectations explicit)
