@@ -4,7 +4,7 @@ description: "portlang - the environment-first agent framework. Use when creatin
 license: MIT
 metadata:
   author: portofcontext
-  version: 1.2.4
+  version: 1.2.5
 ---
 
 # portlang Skill
@@ -203,84 +203,53 @@ Inheritance eliminates duplication across eval suites. Override any section by d
 
 ### 2. Structured Output (agent produces validated JSON)
 
-Define the schema as native TOML under `[output_schema]`:
+Define `output_schema` as a JSON string. Schema validation is automatic — no separate verifier needed:
 
 ```toml
-[output_schema]
-type = "object"
-required = ["status", "file_count", "files", "summary"]
-
-[output_schema.properties.status]
-type = "string"
-enum = ["success", "failure"]
-
-[output_schema.properties.file_count]
-type = "integer"
-minimum = 0
-
-[output_schema.properties.files]
-type = "array"
-
-[output_schema.properties.files.items]
-type = "string"
-
-[output_schema.properties.summary]
-type = "string"
-
-# Validate with jq verifiers
-[[verifier]]
-name = "output-exists"
-command = "test -f /workspace/output.json"
-trigger = "on_stop"
-description = "output.json must exist"
-
-[[verifier]]
-name = "status-success"
-command = "jq -e '.status == \"success\"' /workspace/output.json"
-trigger = "on_stop"
-description = "Status must be success"
+output_schema = '''
+{
+  "type": "object",
+  "required": ["status", "file_count", "files", "summary"],
+  "properties": {
+    "status": {"type": "string", "enum": ["success", "failure"]},
+    "file_count": {"type": "integer", "minimum": 0},
+    "files": {"type": "array", "items": {"type": "string"}},
+    "summary": {"type": "string"}
+  }
+}
+'''
 ```
 
-The agent writes `output.json` to `/workspace`. Schema violations are reported as failures.
+portlang validates the output against the schema, writes `output.json` to `/workspace`, and reports schema violations as failures. Add `[[verifier]]` entries only for additional business logic checks beyond schema conformance.
 
 ### 3. Multi-Layer Verifiers (fail fast with precise feedback)
 
+Layer verifiers from coarse to fine — each one assumes the previous passed:
+
 ```toml
 [[verifier]]
-name = "exists"
-command = "test -f output.json"
+name = "compiled"
+command = "python script.py 2>/dev/null"
 trigger = "on_stop"
-description = "output.json must exist"
+description = "script.py must run without errors"
 
 [[verifier]]
-name = "valid-json"
-command = "python -m json.tool output.json > /dev/null"
+name = "correct-output"
+type = "levenshtein"
+file = "output.txt"
+expected = "42"
+threshold = 1.0
 trigger = "on_stop"
-description = "Must be valid JSON"
-
-[[verifier]]
-name = "tests-pass"
-command = "./validate_schema.py output.json"
-trigger = "on_stop"
-description = "Must match schema"
+description = "output.txt must contain exactly '42'"
 ```
 
-Verifiers run in order, stop on first failure.
+Verifiers run in order, stop on first failure. Use `output_schema` instead of json verifiers when the agent produces structured JSON output.
 
 ### 4. Smart Verifier Types
 
 **Prefer typed verifiers.** They run in the portlang runtime — no packages required, no container dependencies. Fall back to shell verifiers only for logic that can't be expressed with a typed verifier, and only use tools guaranteed in the container baseline (see section 7).
 
 ```toml
-# JSON structure check (no jq needed)
-[[verifier]]
-type = "json"
-name = "valid-schema"
-file = "output.json"
-schema = '{"type": "object", "required": ["status", "count"]}'
-trigger = "on_stop"
-description = "output.json must match schema"
-
 # Fuzzy text match (tolerates minor differences)
 [[verifier]]
 type = "levenshtein"
