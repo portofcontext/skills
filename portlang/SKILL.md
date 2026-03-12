@@ -4,7 +4,7 @@ description: "portlang - the environment-first agent framework. Use when creatin
 license: MIT
 metadata:
   author: portofcontext
-  version: 1.2.5
+  version: 1.2.6
 ---
 
 # portlang Skill
@@ -151,12 +151,14 @@ portlang run field.toml              # Execute once
 portlang check field.toml            # Validate configuration
 portlang converge field.toml -n 10   # Run N times, measure reliability
 portlang eval ./examples/            # Run all fields in a directory
-portlang list [field-name]           # List trajectories (--converged, --failed, --limit)
+portlang eval ./examples/ --resume   # Resume a previous eval, skipping fields that already passed
+portlang list trajectories [field]   # List trajectories (--converged, --failed, --limit)
+portlang list evals [dir]            # List eval runs (--limit)
 portlang replay <id>                 # Step through a trajectory (q=quit, n=next, p=prev)
 portlang diff <id-a> <id-b>          # Compare two trajectories
 portlang report <field-name>         # Adaptation analysis across runs
 portlang view trajectory <id>        # Open trajectory as interactive HTML
-portlang view eval ./examples/       # Open eval results dashboard
+portlang view eval <id-or-dir>       # Open eval results dashboard (by run ID or directory)
 portlang view diff <id-a> <id-b>     # Open trajectory comparison HTML
 portlang view field <field-name>     # Open field adaptation report HTML
 ```
