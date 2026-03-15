@@ -85,7 +85,7 @@ tools = "inherit"       # optional; inherit [[tool]] list from parent instead of
 type = "shell"          # default; type can be omitted for shell verifiers
 name = "..."            # (required)
 command = "..."         # shell command; exit 0 = pass, nonzero = fail
-trigger = "on_stop"     # "on_stop" | "always" | "on_write"; default: on_stop
+trigger = "on_stop"     # "on_stop" | "always" | "on_tool:<tool_name>"; default: on_stop
 description = "..."     # injected into context on failure
 
 # Levenshtein verifier (normalized edit distance):
@@ -250,6 +250,8 @@ Verifiers run in order, stop on first failure. Use `output_schema` instead of js
 ### 4. Smart Verifier Types
 
 **Prefer typed verifiers.** They run in the portlang runtime — no packages required, no container dependencies. Fall back to shell verifiers only for logic that can't be expressed with a typed verifier, and only use tools guaranteed in the container baseline (see section 7).
+
+**Trigger modes:** `on_stop` (default) runs after the agent finishes. `always` runs after every step. `on_tool:<tool_name>` runs after each call to a specific tool — useful for incremental checks, e.g. `trigger = "on_tool:write"` to validate files as they're written.
 
 ```toml
 # Fuzzy text match (tolerates minor differences)
