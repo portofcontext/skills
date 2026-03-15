@@ -4,7 +4,7 @@ description: "portlang - the environment-first agent framework. Use when creatin
 license: MIT
 metadata:
   author: portofcontext
-  version: 1.2.6
+  version: 1.2.7
 ---
 
 # portlang Skill
@@ -54,13 +54,17 @@ All sections are optional unless marked (required). Fields marked `"inherit"` pu
 name = "my-task"        # (required) identifier, used in trajectory storage
 description = "..."     # human-readable summary
 
+[vars]                  # optional; declare {{ var_name }} template variables
+# customer_id = { required = true, description = "Salesforce account ID" }
+# region = { required = false, default = "us-east-1", description = "AWS region" }
+
 [model]                 # (required), or: model = "inherit"
 name = "anthropic/claude-sonnet-4.6"  # (required)
 temperature = 0.5       # default: 0.5
 
 [prompt]                # (required)
-goal = "..."            # (required) initial task, enters context at step 0
-system = "..."          # optional system prompt prepended to all interactions
+goal = "..."            # (required) initial task; supports {{ var }} templates
+system = "..."          # optional system prompt; supports {{ var }} templates
 re_observation = ["echo '=== workspace ===' && ls -1", ...]  # refresh context each step
 
 [environment]           # optional; all fields have defaults
@@ -73,8 +77,10 @@ image = "custom:tag"    # pre-built image (overrides dockerfile)
 allow_write = ["*.py"]  # glob patterns for writable paths; default: none
 network = "deny"        # "deny" | "allow"; default: allow
 max_tokens = 150000     # hard ceiling on total context tokens
-max_cost = "$2.00"      # hard ceiling on total cost
+max_cost = "$2.00"      # hard ceiling on total cost (must be quoted string with $)
 max_steps = 30          # hard ceiling on agent steps
+bash = true             # enable built-in bash tool; default: true
+output_schema = """{ ... }"""  # optional; JSON schema string for structured output
 
 tools = "inherit"       # optional; inherit [[tool]] list from parent instead of defining inline
 
@@ -84,7 +90,7 @@ tools = "inherit"       # optional; inherit [[tool]] list from parent instead of
 [[verifier]]
 type = "shell"          # default; type can be omitted for shell verifiers
 name = "..."            # (required)
-command = "..."         # shell command; exit 0 = pass, nonzero = fail
+command = "..."         # shell command; exit 0 = pass, nonzero = fail; supports {{ var }} templates
 trigger = "on_stop"     # "on_stop" | "always" | "on_tool:<tool_name>"; default: on_stop
 description = "..."     # injected into context on failure
 
@@ -92,28 +98,28 @@ description = "..."     # injected into context on failure
 [[verifier]]
 type = "levenshtein"
 name = "..."
-file = "output.txt"     # workspace-relative path to actual output
-expected = "..."        # reference string to compare against
+file = "output.txt"     # optional; omit to use output_schema structured output
+expected = "..."        # reference string; supports {{ var }} templates
 threshold = 0.9         # similarity [0.0–1.0] required to pass; default: 1.0
-
-# JSON structure verifier:
-[[verifier]]
-type = "json"
-name = "..."
-file = "output.json"    # workspace-relative path to validate
-schema = '{"type": "object"}'  # optional JSON Schema string
 
 # Semantic similarity verifier (cosine via embeddings):
 [[verifier]]
 type = "semantic"
 name = "..."
-file = "output.txt"
-expected = "..."        # reference string to embed and compare
+file = "output.txt"     # optional; omit to use output_schema structured output
+expected = "..."        # reference string to embed and compare; supports {{ var }} templates
 threshold = 0.85        # cosine similarity [0.0–1.0]; default: 0.8
 embedding_model = "bge-small-en-v1.5"  # local model (~67 MB, downloaded once)
 # embedding_url = "https://..."  # use OpenAI-compatible endpoint instead
 
-[output_schema]         # optional; native TOML — JSON schema for structured output
+# Tool call verifier (inspect or require a specific tool call):
+[[verifier]]
+type = "tool_call"
+name = "..."
+tool = "bash"           # (required for on_stop) assert this tool was called
+field = "/input/path"   # optional; JSON pointer into {input: {...}, output: "..."}
+matches = "^[a-z]+"    # optional; regex the field value must match
+not_matches = "^/etc"  # optional; regex the field value must NOT match
 ```
 
 ## Minimal field.toml
@@ -148,6 +154,10 @@ description = "Must print 'Hello, World!'"
 ```bash
 portlang new field.toml              # Scaffold a new field.toml using the flags to configure
 portlang run field.toml              # Execute once
+portlang run field.toml --var k=v    # Pass a template variable (repeatable)
+portlang run field.toml --vars p.json  # Pass variables from a JSON file
+portlang run field.toml --input ./data.csv   # Stage a file into the workspace before the agent starts
+portlang run field.toml --input '{"id":"123"}'  # Stage inline JSON as portlang_input.json
 portlang check field.toml            # Validate configuration
 portlang converge field.toml -n 10   # Run N times, measure reliability
 portlang eval ./examples/            # Run all fields in a directory
@@ -203,28 +213,55 @@ goal = "Do task A using the shared tools."
 
 Inheritance eliminates duplication across eval suites. Override any section by defining it inline.
 
-### 2. Structured Output (agent produces validated JSON)
+### 2. Template Variables (parameterize a field for reuse)
 
-Define `output_schema` as a JSON string. Schema validation is automatic — no separate verifier needed:
+Declare variables in `[vars]`, use `{{ name }}` anywhere in goal/system/re_observation/verifier commands, supply at runtime with `--var`:
 
 ```toml
+[vars]
+currency = { required = false, default = "usd", description = "Currency to report" }
+
+[prompt]
+goal = "Get the account balance and return amounts in {{ currency }}."
+
+[[verifier]]
+name = "correct-currency"
+type = "tool_call"
+tool = "bash"
+trigger = "on_stop"
+description = "Agent must have run bash"
+```
+
+```bash
+portlang run field.toml --var currency=gbp
+portlang run field.toml --vars params.json   # bulk vars from file
+portlang run field.toml --input ./data.csv   # stage input file into workspace
+```
+
+`--input` with a file copies it to the workspace root. `--input '{"key":"val"}'` writes `portlang_input.json`. Use `re_observation` to surface the file contents to the agent each step.
+
+### 3. Structured Output (agent produces validated JSON)
+
+Define `output_schema` inside `[boundary]` as a JSON string. Schema validation is automatic — no separate verifier needed:
+
+```toml
+[boundary]
+allow_write = ["output.json"]
 output_schema = '''
 {
   "type": "object",
-  "required": ["status", "file_count", "files", "summary"],
+  "required": ["status", "count"],
   "properties": {
     "status": {"type": "string", "enum": ["success", "failure"]},
-    "file_count": {"type": "integer", "minimum": 0},
-    "files": {"type": "array", "items": {"type": "string"}},
-    "summary": {"type": "string"}
+    "count": {"type": "integer", "minimum": 0}
   }
 }
 '''
 ```
 
-portlang validates the output against the schema, writes `output.json` to `/workspace`, and reports schema violations as failures. Add `[[verifier]]` entries only for additional business logic checks beyond schema conformance.
+portlang validates the output against the schema, writes `output.json` to `/workspace`, and reports schema violations as failures. Add `[[verifier]]` entries only for additional business logic checks beyond schema conformance. Typed verifiers (`levenshtein`, `semantic`) can omit `file` to validate against the structured output directly.
 
-### 3. Multi-Layer Verifiers (fail fast with precise feedback)
+### 4. Multi-Layer Verifiers (fail fast with precise feedback)
 
 Layer verifiers from coarse to fine — each one assumes the previous passed:
 
@@ -247,9 +284,9 @@ description = "output.txt must contain exactly '42'"
 
 Verifiers run in order, stop on first failure. Use `output_schema` instead of json verifiers when the agent produces structured JSON output.
 
-### 4. Smart Verifier Types
+### 5. Smart Verifier Types
 
-**Prefer typed verifiers.** They run in the portlang runtime — no packages required, no container dependencies. Fall back to shell verifiers only for logic that can't be expressed with a typed verifier, and only use tools guaranteed in the container baseline (see section 7).
+**Prefer typed verifiers.** They run in the portlang runtime — no packages required, no container dependencies. Fall back to shell verifiers only for logic that can't be expressed with a typed verifier, and only use tools guaranteed in the container baseline (see section 8).
 
 **Trigger modes:** `on_stop` (default) runs after the agent finishes. `always` runs after every step. `on_tool:<tool_name>` runs after each call to a specific tool — useful for incremental checks, e.g. `trigger = "on_tool:write"` to validate files as they're written.
 
@@ -277,7 +314,7 @@ description = "Summary must convey the correct conclusion"
 
 Local embedding model downloaded automatically (~67 MB, no API key required).
 
-### 5. Scoped Boundaries
+### 6. Scoped Boundaries
 
 ```toml
 [boundary]
@@ -288,7 +325,7 @@ max_cost = "$1.00"
 max_steps = 20
 ```
 
-### 6. Re-observation (keep context fresh)
+### 7. Re-observation (keep context fresh)
 
 ```toml
 [prompt]
@@ -301,7 +338,7 @@ re_observation = [
 
 Commands run before each agent step, injecting fresh state into context.
 
-### 7. Custom Environment
+### 8. Custom Environment
 
 ```toml
 [environment]
@@ -319,7 +356,7 @@ image = "myregistry/myimage:latest"
 
 Shell verifiers run inside the container and are subject to the same constraints. **Prefer typed verifiers** (`type = "json"`, `"levenshtein"`, `"semantic"`) over shell verifiers whenever possible — they run natively in the portlang runtime and require nothing installed. Only use shell verifiers for checks that require container-side execution, and only invoke tools you've declared in `packages`.
 
-### 8. Custom Tools
+### 9. Custom Tools
 
 **Default tools (always available, no `[[tool]]` entry needed):**
 - `bash` — run shell commands in the container
@@ -385,7 +422,7 @@ transport = "http"
 headers = { Authorization = "Bearer ${STRIPE_KEY}" }
 ```
 
-### 9. Batch Evaluation
+### 10. Batch Evaluation
 
 ```bash
 portlang eval ./examples/
