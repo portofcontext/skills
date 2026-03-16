@@ -1,10 +1,10 @@
 ---
 name: portlang
-description: "portlang - the environment-first agent framework. Use when creating field.toml files, defining boundaries and verifiers, adding custom tools (shell, Python, MCP), debugging trajectories, measuring convergence, configuring structured JSON output with output_schema, running batch evals, viewing HTML trajectory dashboards, or analyzing agent behavior across runs. portlang manages environments not loops - you define the search space, the agent finds the path."
+description: "portlang - the environment-first agent framework. Use when creating field.toml or .field files, defining boundaries and verifiers, adding custom tools (shell, Python, MCP), debugging trajectories, measuring convergence, configuring structured JSON output with output_schema, running batch evals, viewing HTML trajectory dashboards, or analyzing agent behavior across runs. portlang manages environments not loops - you define the search space, the agent finds the path."
 license: MIT
 metadata:
   author: portofcontext
-  version: 1.2.7
+  version: 1.2.8
 ---
 
 # portlang Skill
@@ -38,17 +38,19 @@ export OPENROUTER_API_KEY=sk-or-v1-...
 
 3. **Verify installation:**
 ```bash
-portlang init  # Check container support 
+portlang init  # Check container support
 ```
+
+4. **Install the VS Code extension** (recommended): Search for **"portlang"** in the VS Code extension marketplace and install it. Provides LSP support — syntax highlighting, validation, and autocompletion for `.field` files.
 
 **Model naming by provider:**
 - Anthropic API: `anthropic/claude-sonnet-4.6`, `anthropic/claude-opus-4.5`
 - OpenRouter: `anthropic/claude-3.5-sonnet`, `anthropic/claude-3-opus`, anything on openrouter that support tool calling
 - Provider auto-detected from API key
 
-## field.toml Structure
+## Field File Structure
 
-All sections are optional unless marked (required). Fields marked `"inherit"` pull their value from a parent `field.toml` one directory up (auto-detected if `../field.toml` exists).
+Fields use the `.field` extension (preferred) or `.toml` — both are supported. All sections are optional unless marked (required). Fields marked `"inherit"` pull their value from a parent field one directory up (auto-detected if `../parent.field` exists).
 
 ```toml
 name = "my-task"        # (required) identifier, used in trajectory storage
@@ -122,7 +124,7 @@ matches = "^[a-z]+"    # optional; regex the field value must match
 not_matches = "^/etc"  # optional; regex the field value must NOT match
 ```
 
-## Minimal field.toml
+## Minimal Field File
 
 ```toml
 name = "my-task"
@@ -152,14 +154,14 @@ description = "Must print 'Hello, World!'"
 ## Essential Commands
 
 ```bash
-portlang new field.toml              # Scaffold a new field.toml using the flags to configure
-portlang run field.toml              # Execute once
-portlang run field.toml --var k=v    # Pass a template variable (repeatable)
-portlang run field.toml --vars p.json  # Pass variables from a JSON file
-portlang run field.toml --input ./data.csv   # Stage a file into the workspace before the agent starts
-portlang run field.toml --input '{"id":"123"}'  # Stage inline JSON as portlang_input.json
-portlang check field.toml            # Validate configuration
-portlang converge field.toml -n 10   # Run N times, measure reliability
+portlang new field.field             # Scaffold a new field file (.field preferred; .toml also supported)
+portlang run field.field             # Execute once
+portlang run field.field --var k=v   # Pass a template variable (repeatable)
+portlang run field.field --vars p.json  # Pass variables from a JSON file
+portlang run field.field --input ./data.csv   # Stage a file into the workspace before the agent starts
+portlang run field.field --input '{"id":"123"}'  # Stage inline JSON as portlang_input.json
+portlang check field.field           # Validate configuration
+portlang converge field.field -n 10  # Run N times, measure reliability
 portlang eval ./examples/            # Run all fields in a directory
 portlang eval ./examples/ --resume   # Resume a previous eval, skipping fields that already passed
 portlang list trajectories [field]   # List trajectories (--converged, --failed, --limit)
@@ -179,10 +181,10 @@ Add `--html` to `replay`/`diff` for HTML output. Add `--no-open` to any `view` c
 
 ### 1. Field Inheritance (shared model/boundary/tools across a suite)
 
-If `../field.toml` exists, a child field can inherit from it automatically:
+If `../parent.field` exists, a child field can inherit from it automatically:
 
 ```toml
-# parent/field.toml — shared config for all child fields
+# parent/parent.field — shared config for all child fields
 name = "parent"
 
 [model]
@@ -201,7 +203,7 @@ file = "./tools/shared_utils.py"
 ```
 
 ```toml
-# parent/task-a/field.toml — inherits model, boundary, and tools
+# parent/task-a/field.field — child; inherits from ../parent.field
 name = "task-a"
 model = "inherit"
 boundary = "inherit"
@@ -233,9 +235,9 @@ description = "Agent must have run bash"
 ```
 
 ```bash
-portlang run field.toml --var currency=gbp
-portlang run field.toml --vars params.json   # bulk vars from file
-portlang run field.toml --input ./data.csv   # stage input file into workspace
+portlang run field.field --var currency=gbp
+portlang run field.field --vars params.json   # bulk vars from file
+portlang run field.field --input ./data.csv   # stage input file into workspace
 ```
 
 `--input` with a file copies it to the workspace root. `--input '{"key":"val"}'` writes `portlang_input.json`. Use `re_observation` to surface the file contents to the agent each step.
@@ -381,7 +383,7 @@ input_schema = '{"type": "object", "properties": {"path": {"type": "string"}}, "
 # /// script
 # dependencies = [requests]
 # ///
-# uv auto-installs dependencies — no packages needed in field.toml
+# uv auto-installs dependencies — no packages needed in field.field
 
 def execute(expression: str) -> dict:
     """Evaluate a math expression and return the result."""
@@ -391,14 +393,14 @@ def execute(expression: str) -> dict:
 ```toml
 [[tool]]
 type = "python"
-file = "./tools/calculator.py"   # relative to field.toml, not workspace
+file = "./tools/calculator.py"   # relative to the field file, not workspace
 function = "execute"  # schema auto-extracted from type hints; omit to expose all functions
 ```
 
 > **Python tool rules:**
 > - Each tool file runs in isolation — tool files cannot import each other. Put all related logic in one file.
 > - Declare third-party dependencies with a `# /// script` PEP 723 block at the top; `uv` installs them automatically.
-> - File paths in `file =` are relative to `field.toml`, not the workspace root.
+> - File paths in `file =` are relative to the field file, not the workspace root.
 
 **Tool-first design for complex tasks:** For tasks involving multi-step API calls, data aggregation, or web scraping, write Python tools that encapsulate that logic before writing the field. The agent's `goal` should then be: call the tool, write the output file. This keeps steps under 5, cost under $0.05, and `allow_write` naturally minimal. Agents that try to do complex work through raw shell commands (curl pipes, temp files, bash scripts) burn budget and fail more often.
 
@@ -469,7 +471,7 @@ Useful for regression testing after changes.
 - **reference/verifier_patterns.md** - 20 real-world verifier examples
 - **reference/custom_tools.md** - Shell, Python, MCP guides
 - **reference/trajectory_analysis.md** - Advanced debugging
-- **reference/field_recipes.md** - 8 complete field.toml examples
+- **reference/field_recipes.md** - 8 complete field examples
 
 ## Core Principles
 
