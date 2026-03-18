@@ -4,7 +4,7 @@ description: "portlang - the environment-first agent framework. Use when creatin
 license: MIT
 metadata:
   author: portofcontext
-  version: 1.2.8
+  version: 1.2.9
 ---
 
 # portlang Skill
@@ -50,7 +50,7 @@ portlang init  # Check container support
 
 ## Field File Structure
 
-Fields use the `.field` extension (preferred) or `.toml` — both are supported. All sections are optional unless marked (required). Fields marked `"inherit"` pull their value from a parent field one directory up (auto-detected if `../parent.field` exists).
+Fields use the `.field` extension (preferred) or `.toml` — both are supported. All sections are optional unless marked (required). Fields marked `"inherit"` pull their value from a parent field one directory up (auto-detected from `../*.field`).
 
 ```toml
 name = "my-task"        # (required) identifier, used in trajectory storage
@@ -154,34 +154,36 @@ description = "Must print 'Hello, World!'"
 ## Essential Commands
 
 ```bash
-portlang new field.field             # Scaffold a new field file (.field preferred; .toml also supported)
-portlang run field.field             # Execute once
-portlang run field.field --var k=v   # Pass a template variable (repeatable)
-portlang run field.field --vars p.json  # Pass variables from a JSON file
-portlang run field.field --input ./data.csv   # Stage a file into the workspace before the agent starts
-portlang run field.field --input '{"id":"123"}'  # Stage inline JSON as portlang_input.json
-portlang check field.field           # Validate configuration
-portlang converge field.field -n 10  # Run N times, measure reliability
-portlang eval ./examples/            # Run all fields in a directory
-portlang eval ./examples/ --resume   # Resume a previous eval, skipping fields that already passed
-portlang list trajectories [field]   # List trajectories (--converged, --failed, --limit)
-portlang list evals [dir]            # List eval runs (--limit)
-portlang replay <id>                 # Step through a trajectory (q=quit, n=next, p=prev)
-portlang diff <id-a> <id-b>          # Compare two trajectories
-portlang report <field-name>         # Adaptation analysis across runs
+portlang new task.field             # Scaffold a new field file (.field preferred; .toml also supported)
+portlang new -i                      # Interactive step-by-step field creation
+portlang run task.field             # Execute once (native runner, default)
+portlang run task.field --dry-run   # Validate field without running (parse, check vars, show config)
+portlang run task.field -n 10       # Run N times and report convergence reliability
+portlang run task.field --runner claude-code  # Use Claude Code as agent loop
+portlang run task.field --var k=v   # Pass a template variable (repeatable)
+portlang run task.field --vars p.json  # Pass variables from a JSON file
+portlang run task.field --input ./data.csv   # Stage a file into the workspace before the agent starts
+portlang run task.field --input '{"id":"123"}'  # Stage inline JSON as portlang_input.json
+portlang list [field-name]           # List trajectories (--converged, --failed, --limit)
+portlang eval run ./examples/        # Run all fields in a directory
+portlang eval run ./examples/ --runner claude-code  # Eval suite using Claude Code runner
+portlang eval run ./examples/ --resume <id>   # Resume a previous eval, skipping fields that already passed
+portlang eval list [dir]             # List eval runs (--limit)
+portlang eval view <id-or-dir>       # Open eval results dashboard (by run ID or directory)
 portlang view trajectory <id>        # Open trajectory as interactive HTML
-portlang view eval <id-or-dir>       # Open eval results dashboard (by run ID or directory)
+portlang view trajectory <id> --format text  # Replay trajectory step-by-step in terminal
 portlang view diff <id-a> <id-b>     # Open trajectory comparison HTML
 portlang view field <field-name>     # Open field adaptation report HTML
+portlang docs                        # Print CLI reference as Markdown
 ```
 
-Add `--html` to `replay`/`diff` for HTML output. Add `--no-open` to any `view` command to skip opening the browser. See **reference/CLI.md** for full flag details.
+Add `--no-open` to any `view` command to skip opening the browser. See **reference/CLI.md** for full flag details.
 
 ## Key Patterns
 
 ### 1. Field Inheritance (shared model/boundary/tools across a suite)
 
-If `../parent.field` exists, a child field can inherit from it automatically:
+If a `*.field` file exists one directory up, a child field can inherit from it automatically:
 
 ```toml
 # parent/parent.field — shared config for all child fields
@@ -203,7 +205,7 @@ file = "./tools/shared_utils.py"
 ```
 
 ```toml
-# parent/task-a/field.field — child; inherits from ../parent.field
+# parent/task-a/task.field — child; inherits from ../parent.field
 name = "task-a"
 model = "inherit"
 boundary = "inherit"
@@ -235,9 +237,9 @@ description = "Agent must have run bash"
 ```
 
 ```bash
-portlang run field.field --var currency=gbp
-portlang run field.field --vars params.json   # bulk vars from file
-portlang run field.field --input ./data.csv   # stage input file into workspace
+portlang run task.field --var currency=gbp
+portlang run task.field --vars params.json   # bulk vars from file
+portlang run task.field --input ./data.csv   # stage input file into workspace
 ```
 
 `--input` with a file copies it to the workspace root. `--input '{"key":"val"}'` writes `portlang_input.json`. Use `re_observation` to surface the file contents to the agent each step.
@@ -383,7 +385,7 @@ input_schema = '{"type": "object", "properties": {"path": {"type": "string"}}, "
 # /// script
 # dependencies = [requests]
 # ///
-# uv auto-installs dependencies — no packages needed in field.field
+# uv auto-installs dependencies — no packages needed in task.field
 
 def execute(expression: str) -> dict:
     """Evaluate a math expression and return the result."""
@@ -424,7 +426,32 @@ transport = "http"
 headers = { Authorization = "Bearer ${STRIPE_KEY}" }
 ```
 
-### 10. Batch Evaluation
+### 10. Claude Code Runner
+
+Use `--runner claude-code` to run the agent loop through Claude Code instead of the native runner. This gives the agent Edit, Glob, Grep, LSP, WebSearch, and WebFetch — the full Claude Code toolset — inside portlang's sandbox and verifier system.
+
+```bash
+portlang run example.field --runner claude-code
+```
+
+**Auth:** if Claude Code is already installed and authenticated, no setup is needed — portlang reads credentials from `~/.claude/.credentials.json` automatically. Otherwise run `claude setup-token`, or set `ANTHROPIC_API_KEY`.
+
+**How field config maps to Claude Code:**
+
+| Field config | Behavior |
+|---|---|
+| `model.name` | Passed to Claude Code |
+| `[[tool]]` MCP | Passed directly via `--mcp-config` |
+| `[[tool]]` shell/python | Wrapped as MCP stdio servers, run in container |
+| `boundary.allow_write` | Enforced via PostToolUse hook on Write/Edit |
+| `boundary.max_steps/cost/tokens` | Monitored from stream; process killed on breach |
+| `[[verifier]]` shell, `on_stop` | Run by portlang after agent exits |
+| `[[verifier]]` shell, `always`/`on_tool` | Run as Claude Code PostToolUse hooks |
+| `boundary.network` | Always enabled (Claude Code requires API access) |
+
+**Limitations vs native runner:** `tool_call` verifiers and boundary context tracing are not supported.
+
+### 11. Batch Evaluation
 
 ```bash
 portlang eval ./examples/
