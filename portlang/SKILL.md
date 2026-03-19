@@ -4,7 +4,7 @@ description: "portlang - the environment-first agent framework. Use when working
 license: MIT
 metadata:
   author: portofcontext
-  version: 1.2.9
+  version: 1.3.0
 ---
 
 # portlang Skill
@@ -95,6 +95,7 @@ name = "..."            # (required)
 command = "..."         # shell command; exit 0 = pass, nonzero = fail; supports {{ var }} templates
 trigger = "on_stop"     # "on_stop" | "always" | "on_tool:<tool_name>"; default: on_stop
 description = "..."     # injected into context on failure
+eval_only = false       # if true, skipped during `portlang run`; only runs during `portlang eval run`
 
 # Levenshtein verifier (normalized edit distance):
 [[verifier]]
@@ -293,6 +294,8 @@ Verifiers run in order, stop on first failure. Use `output_schema` instead of js
 **Prefer typed verifiers.** They run in the portlang runtime — no packages required, no container dependencies. Fall back to shell verifiers only for logic that can't be expressed with a typed verifier, and only use tools guaranteed in the container baseline (see section 8).
 
 **Trigger modes:** `on_stop` (default) runs after the agent finishes. `always` runs after every step. `on_tool:<tool_name>` runs after each call to a specific tool — useful for incremental checks, e.g. `trigger = "on_tool:write"` to validate files as they're written.
+
+**eval_only:** Set `eval_only = true` to exclude a verifier from regular `portlang run` but include it in `portlang eval run`. Use this for ground-truth comparisons (`levenshtein`, `semantic`) where the expected value is known but shouldn't affect development runs or steer agent behavior.
 
 ```toml
 # Fuzzy text match (tolerates minor differences)
