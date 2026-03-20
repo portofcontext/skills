@@ -4,7 +4,7 @@ description: "portlang - the environment-first agent framework. Use when working
 license: MIT
 metadata:
   author: portofcontext
-  version: 1.3.0
+  version: 1.4.0
 ---
 
 # portlang Skill
@@ -161,6 +161,7 @@ portlang run task.field             # Execute once (native runner, default)
 portlang run task.field --dry-run   # Validate field without running (parse, check vars, show config)
 portlang run task.field -n 10       # Run N times and report convergence reliability
 portlang run task.field --runner claude-code  # Use Claude Code as agent loop
+portlang run task.field --auto-reflect       # Run and immediately reflect on the trajectory
 portlang run task.field --var k=v   # Pass a template variable (repeatable)
 portlang run task.field --vars p.json  # Pass variables from a JSON file
 portlang run task.field --input ./data.csv   # Stage a file into the workspace before the agent starts
@@ -175,6 +176,9 @@ portlang view trajectory <id>        # Open trajectory as interactive HTML
 portlang view trajectory <id> --format text  # Replay trajectory step-by-step in terminal
 portlang view diff <id-a> <id-b>     # Open trajectory comparison HTML
 portlang view field <field-name>     # Open field adaptation report HTML
+portlang reflect --field <field-name>           # Analyze trajectories and surface insights (AI-powered)
+portlang reflect --field <field-name> -n 10     # Analyze N most recent trajectories
+portlang reflect --field <field-name> --trajectory-id <id>  # Analyze a specific trajectory
 portlang docs                        # Print CLI reference as Markdown
 ```
 
@@ -372,42 +376,79 @@ Shell verifiers run inside the container and are subject to the same constraints
 
 Define `[[tool]]` entries only to add capabilities beyond these three.
 
-**Shell tool:**
+**Python tools are the default choice.** Use shell tools only for trivial single-command wrappers (e.g. `wc`, `cp`). Anything that parses output, handles errors, calls an API, or processes data belongs in a Python tool.
+
+portlang auto-extracts everything the agent uses from the Python function — **the quality of these annotations directly determines how well the agent uses the tool:**
+
+| Python source | Agent sees |
+|---|---|
+| Function name | Tool name |
+| Docstring | Tool description (how agent decides when to call it) |
+| Parameter type hints | Input schema (validated before call) |
+| `Literal["a", "b"]` | Enum constraints |
+| Pydantic `BaseModel` return | Output schema (agent knows exactly what it gets back) |
+
+Use `-> dict` and the agent gets no output schema. Use `-> MyModel(BaseModel)` and the agent sees typed fields it can reason about.
+
+**Anti-pattern — don't do this:**
 ```toml
+# Bad: brittle, untyped, hard to debug
 [[tool]]
 type = "shell"
-name = "word_count"
-description = "Count words in a file"
-command = "wc {path}"
-input_schema = '{"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]}'
+name = "fetch_data"
+command = "curl -s {url} | jq '.results' > /workspace/data.json && echo '{\"ok\": true}'"
+input_schema = '{"type": "object", "properties": {"url": {"type": "string"}}, "required": ["url"]}'
 ```
 
-**Python tool (auto-schema from type hints):**
+**Do this instead — Python tool:**
 ```python
-# tools/calculator.py
+# tools/fetch_data.py
 # /// script
-# dependencies = [requests]
+# dependencies = ["requests", "pydantic"]
 # ///
-# uv auto-installs dependencies — no packages needed in task.field
 
-def execute(expression: str) -> dict:
-    """Evaluate a math expression and return the result."""
-    return {"result": eval(expression)}
+import json, pathlib
+import requests
+from pydantic import BaseModel
+
+class FetchResult(BaseModel):
+    ok: bool
+    count: int
+    output_path: str
+
+def fetch_data(url: str, output_path: str) -> FetchResult:
+    """Fetch JSON from a URL and write results to output_path."""
+    resp = requests.get(url, timeout=10)
+    resp.raise_for_status()
+    data = resp.json().get("results", [])
+    pathlib.Path(output_path).write_text(json.dumps(data, indent=2))
+    return FetchResult(ok=True, count=len(data), output_path=output_path)
 ```
 
 ```toml
 [[tool]]
 type = "python"
-file = "./tools/calculator.py"   # relative to the field file, not workspace
-function = "execute"  # schema auto-extracted from type hints; omit to expose all functions
+file = "./tools/fetch_data.py"
+function = "fetch_data"  # schema auto-extracted from type hints
 ```
 
 > **Python tool rules:**
+> - **Use Pydantic models as return types.** portlang auto-extracts the JSON schema — no manual schema needed. Raise exceptions on errors rather than returning error dicts.
 > - Each tool file runs in isolation — tool files cannot import each other. Put all related logic in one file.
-> - Declare third-party dependencies with a `# /// script` PEP 723 block at the top; `uv` installs them automatically.
+> - Declare third-party dependencies with a `# /// script` PEP 723 block at the top; `uv` installs them automatically — no need to add packages to `[environment]`.
 > - File paths in `file =` are relative to the field file, not the workspace root.
 
-**Tool-first design for complex tasks:** For tasks involving multi-step API calls, data aggregation, or web scraping, write Python tools that encapsulate that logic before writing the field. The agent's `goal` should then be: call the tool, write the output file. This keeps steps under 5, cost under $0.05, and `allow_write` naturally minimal. Agents that try to do complex work through raw shell commands (curl pipes, temp files, bash scripts) burn budget and fail more often.
+**Shell tool (for simple wrappers only):**
+```toml
+[[tool]]
+type = "shell"
+name = "word_count"
+description = "Count words in a file"
+command = "wc -w {path}"
+input_schema = '{"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]}'
+```
+
+**Tool-first design:** Write Python tools before writing the field. The agent's goal should be: call the tool, write the output. This keeps steps under 5, cost under $0.05, and boundaries naturally minimal. Agents that try to do complex work through raw bash (curl pipes, temp files, awk scripts) burn budget and fail more often.
 
 **MCP server (stdio):**
 ```toml
@@ -451,26 +492,28 @@ portlang run example.field --runner claude-code
 | `[[verifier]]` shell, `on_stop` | Run by portlang after agent exits |
 | `[[verifier]]` shell, `always`/`on_tool` | Run as Claude Code PostToolUse hooks |
 | `boundary.network` | Always enabled (Claude Code requires API access) |
+| `boundary.output_schema` | Agent receives a `submit_output` tool; structured output captured from tool call |
 
 **Limitations vs native runner:** `tool_call` verifiers and boundary context tracing are not supported.
 
 ### 11. Batch Evaluation
 
 ```bash
-portlang eval ./examples/
-portlang view eval ./examples/   # Open interactive HTML dashboard
+portlang eval run ./examples/
+portlang eval view ./examples/   # Open interactive HTML dashboard
 ```
 
 Useful for regression testing after changes.
 
 ## Debugging Workflow
 
-1. **Run fails** → `portlang replay <id>` to see what happened
+1. **Run fails** → `portlang view trajectory <id> --format text` to replay step-by-step
 2. **Find failure point** → Check which verifier failed and at which step
-3. **Non-determinism** → `portlang diff <id-a> <id-b>` to find divergence
+3. **Non-determinism** → `portlang view diff <id-a> <id-b>` to find divergence
 4. **Visual debugging** → `portlang view trajectory <id>` for HTML view
-5. **Optimize** → `portlang converge -n 10` to measure reliability
-6. **Patterns** → `portlang report <field-name>` for adaptation analysis
+5. **Optimize** → `portlang run task.field -n 10` to measure reliability
+6. **Patterns** → `portlang view field <field-name>` for adaptation analysis
+7. **Insights** → `portlang reflect --field <field-name>` to surface AI-powered insights from trajectories
 
 ## Common Issues
 

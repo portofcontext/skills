@@ -11,158 +11,97 @@ portlang supports three types of custom tools: Shell, Python, and MCP servers. T
 - Provide domain-specific functionality
 
 **When to use each type:**
-- **Shell:** Simple file operations, system commands, CLI wrappers
-- **Python:** Data processing, complex logic, external libraries
-- **MCP:** Third-party integrations, databases, APIs
-
-## Shell Tools
-
-### Basic Structure
-
-Shell tools use a **command template** where `{param}` placeholders are substituted with agent-provided values. Output goes to stdout.
-
-**Definition in field.toml:**
-```toml
-[[tool]]
-type = "shell"
-name = "word_count"
-description = "Count words in a file"
-command = "wc -w {file}"
-input_schema = '{"type": "object", "properties": {"file": {"type": "string"}}, "required": ["file"]}'
-```
-
-**Agent usage:**
-```
-Agent calls: word_count({"file": "data.txt"})
-Runtime executes: wc -w data.txt
-Output: 1234 data.txt
-```
-
-For more complex logic, point the command at a script:
-
-**tools/word_count.sh:**
-```bash
-#!/bin/bash
-set -e
-FILE="$1"
-if [ ! -f "$FILE" ]; then
-    echo "{\"error\": \"File not found: $FILE\"}"
-    exit 1
-fi
-COUNT=$(wc -w "$FILE" | awk '{print $1}')
-echo "{\"count\": $COUNT}"
-```
-
-```toml
-[[tool]]
-type = "shell"
-name = "word_count"
-description = "Count words in a file and return JSON"
-command = "./tools/word_count.sh {file}"
-input_schema = '{"type": "object", "properties": {"file": {"type": "string"}}, "required": ["file"]}'
-```
-
-### Multi-Parameter Tools
-
-```toml
-[[tool]]
-type = "shell"
-name = "file_copy"
-description = "Copy a file to a new location"
-command = "cp {source} {destination} && echo '{\"success\": true}'"
-input_schema = '{"type": "object", "properties": {"source": {"type": "string"}, "destination": {"type": "string"}}, "required": ["source", "destination"]}'
-```
-
-### Complex Example: HTTP Request Tool
-
-```toml
-[[tool]]
-type = "shell"
-name = "http_get"
-description = "Fetch a URL and return the response body"
-command = "curl -s {url}"
-input_schema = '{"type": "object", "properties": {"url": {"type": "string"}}, "required": ["url"]}'
-```
-
-For richer output (status code + body), use a script:
-
-```bash
-#!/bin/bash
-# tools/http_get.sh
-URL="$1"
-RESPONSE=$(curl -s -w "\n%{http_code}" "$URL")
-BODY=$(echo "$RESPONSE" | head -n -1)
-STATUS=$(echo "$RESPONSE" | tail -n 1)
-ESCAPED_BODY=$(echo "$BODY" | jq -Rs .)
-echo "{\"status\": $STATUS, \"body\": $ESCAPED_BODY}"
-```
-
-```toml
-[[tool]]
-type = "shell"
-name = "http_get"
-description = "Fetch URL, returns status and body"
-command = "./tools/http_get.sh {url}"
-input_schema = '{"type": "object", "properties": {"url": {"type": "string"}}, "required": ["url"]}'
-```
+- **Python:** Default choice. API calls, data processing, file parsing, any logic that can fail. Auto-schema from type hints, PEP 723 dependency management, structured dict returns.
+- **Shell:** Trivial single-command wrappers only (`wc`, `cp`, `ls`). Do not use for anything that parses output or chains commands.
+- **MCP:** Third-party integrations, databases, APIs with official MCP servers.
 
 ## Python Tools
 
-### Basic Structure
+Python tools are the **default choice** for custom tools in portlang. They give you typed parameters, Pydantic return types, automatic dependency management via PEP 723, and structured output — no manual JSON schema, no shell escaping, no fragile pipelines.
 
-Python tools are functions with typed parameters. portlang auto-extracts the JSON schema from type hints; no manual schema definition needed.
+### How auto-extraction works
+
+portlang extracts everything the agent needs to use a tool directly from the Python function. **The quality of these annotations determines how well the agent uses the tool.**
+
+| Python source | What the agent sees |
+|---|---|
+| Function name (`fetch_data`) | Tool name |
+| Docstring | Tool description — how the agent decides when to call it |
+| Parameter names + type hints | Input schema (validated before the function is called) |
+| `Literal["a", "b"]` types | Enum constraints in the schema |
+| Pydantic `BaseModel` return type | Output schema — the agent knows exactly what it will get back |
+
+This means:
+- A vague docstring → agent misuses the tool
+- `str` where you mean `Literal["csv", "json"]` → agent passes invalid values
+- `-> dict` return → agent gets no output schema, can't reason about the result
+- `-> MyModel(BaseModel)` return → agent sees typed fields with descriptions
+
+**Write functions as if the docstring and type hints are the only documentation the agent will ever see — because they are.**
+
+### Basic Structure
 
 **Definition in field.toml:**
 ```toml
 [[tool]]
 type = "python"
 file = "./tools/analyzer.py"
-function = "analyze_text"  # omit to expose all functions
+function = "analyze_text"  # schema auto-extracted from type hints; omit to expose all functions
 ```
 
 **tools/analyzer.py:**
 ```python
 #!/usr/bin/env python3
 # /// script
-# dependencies = []
+# dependencies = ["pydantic"]
 # ///
 
-def analyze_text(text: str) -> dict:
+from pydantic import BaseModel
+
+class TextStats(BaseModel):
+    word_count: int
+    char_count: int
+    avg_word_length: float
+
+def analyze_text(text: str) -> TextStats:
     """Analyze text and return word count, character count, and average word length."""
     if not text:
-        return {"error": "Text cannot be empty"}
+        raise ValueError("Text cannot be empty")
     words = text.split()
     word_count = len(words)
     avg_word_length = sum(len(w) for w in words) / word_count if word_count > 0 else 0
-    return {
-        "word_count": word_count,
-        "char_count": len(text),
-        "avg_word_length": round(avg_word_length, 2)
-    }
+    return TextStats(
+        word_count=word_count,
+        char_count=len(text),
+        avg_word_length=round(avg_word_length, 2),
+    )
 ```
 
 ### PEP 723 Inline Dependencies
 
-For tools requiring external libraries, use PEP 723 format:
+Declare third-party dependencies at the top of the file. `uv` installs them automatically — no need to add packages to `[environment]`. Use Pydantic for return types so portlang auto-extracts the JSON schema.
 
 ```python
 #!/usr/bin/env python3
 # /// script
 # dependencies = [
-#   "pandas>=2.0.0",
 #   "numpy>=1.24.0",
+#   "pydantic",
 # ]
 # ///
 
-def compute_stats(operation: str, data: list) -> dict:
+from pydantic import BaseModel
+from typing import Literal
+import numpy as np
+
+class StatsResult(BaseModel):
+    operation: Literal["mean", "median"]
+    result: float
+
+def compute_stats(operation: Literal["mean", "median"], data: list[float]) -> StatsResult:
     """Compute mean or median of a list of numbers."""
-    import numpy as np
-    if operation == "mean":
-        return {"result": float(np.mean(data))}
-    elif operation == "median":
-        return {"result": float(np.median(data))}
-    else:
-        return {"error": f"Unknown operation: {operation}"}
+    value = float(np.mean(data)) if operation == "mean" else float(np.median(data))
+    return StatsResult(operation=operation, result=value)
 ```
 
 **Runtime behavior:**
@@ -170,6 +109,42 @@ def compute_stats(operation: str, data: list) -> dict:
 - Creates isolated virtual environment
 - Installs dependencies automatically
 - Caches environment for reuse
+
+### HTTP API Example
+
+Use `requests` instead of shell `curl` — typed, error-handled, no escaping:
+
+```python
+#!/usr/bin/env python3
+# /// script
+# dependencies = ["requests", "pydantic"]
+# ///
+
+import json, pathlib
+import requests
+from pydantic import BaseModel
+
+class FetchResult(BaseModel):
+    status: int
+    output_path: str
+    record_count: int
+
+def http_get(url: str, output_path: str) -> FetchResult:
+    """Fetch JSON from a URL and write it to output_path."""
+    resp = requests.get(url, timeout=10)
+    resp.raise_for_status()
+    data = resp.json()
+    pathlib.Path(output_path).write_text(json.dumps(data, indent=2))
+    count = len(data) if isinstance(data, list) else 1
+    return FetchResult(status=resp.status_code, output_path=output_path, record_count=count)
+```
+
+```toml
+[[tool]]
+type = "python"
+file = "./tools/http_get.py"
+function = "http_get"
+```
 
 ### File Processing Example
 
@@ -213,25 +188,64 @@ def validate_schema(data: dict, schema: dict) -> dict:
 
 ### Error Handling Best Practices
 
-Use typed parameters — portlang validates inputs before calling the function. Handle exceptions and always return a dict:
+Use Pydantic models for return types — portlang extracts the schema automatically. Raise exceptions on errors rather than returning error dicts:
 
 ```python
 #!/usr/bin/env python3
+# /// script
+# dependencies = ["pydantic"]
+# ///
 
-def process_file(path: str, mode: str) -> dict:
+from pydantic import BaseModel
+from typing import Literal
+
+class FileResult(BaseModel):
+    mode: Literal["count", "summarize"]
+    result: str | int
+
+def process_file(path: str, mode: Literal["count", "summarize"]) -> FileResult:
     """Process a file in the given mode ('count' or 'summarize')."""
-    try:
-        if mode not in ("count", "summarize"):
-            return {"error": f"Unknown mode: {mode}", "success": False}
-        with open(path) as f:
-            content = f.read()
-        if mode == "count":
-            return {"success": True, "result": len(content.split())}
-        return {"success": True, "result": content[:200]}
-    except FileNotFoundError as e:
-        return {"error": f"File not found: {e.filename}", "success": False}
-    except Exception as e:
-        return {"error": f"Unexpected error: {str(e)}", "success": False}
+    with open(path) as f:
+        content = f.read()
+    if mode == "count":
+        return FileResult(mode=mode, result=len(content.split()))
+    return FileResult(mode=mode, result=content[:200])
+```
+
+## Shell Tools
+
+Shell tools are for **trivial single-command wrappers only**. If you need to parse output, chain commands, or handle errors — use a Python tool instead.
+
+### Basic Structure
+
+Shell tools use a **command template** where `{param}` placeholders are substituted with agent-provided values. Output goes to stdout.
+
+**Definition in field.toml:**
+```toml
+[[tool]]
+type = "shell"
+name = "word_count"
+description = "Count words in a file"
+command = "wc -w {file}"
+input_schema = '{"type": "object", "properties": {"file": {"type": "string"}}, "required": ["file"]}'
+```
+
+**Agent usage:**
+```
+Agent calls: word_count({"file": "data.txt"})
+Runtime executes: wc -w data.txt
+Output: 1234 data.txt
+```
+
+### Multi-Parameter Tools
+
+```toml
+[[tool]]
+type = "shell"
+name = "file_copy"
+description = "Copy a file to a new location"
+command = "cp {source} {destination} && echo '{\"success\": true}'"
+input_schema = '{"type": "object", "properties": {"source": {"type": "string"}, "destination": {"type": "string"}}, "required": ["source", "destination"]}'
 ```
 
 ## MCP Servers
@@ -423,15 +437,28 @@ transport = "stdio"
 
 ## Tool Selection Guide
 
+**Default to Python.** Shell tools are for trivial single-command wrappers only. If you're writing more than one shell command, or parsing output, or calling an API — use a Python tool instead.
+
 | Use Case | Recommended Type | Why |
 |----------|-----------------|-----|
-| File operations | Shell | Simple, fast, no dependencies |
-| Data processing | Python | Rich ecosystem, pandas/numpy |
-| API calls | Shell (curl) or Python (requests) | Both work, Python has better error handling |
-| Database queries | MCP | Use official MCP database servers |
-| Complex logic | Python | Type hints, testing, libraries |
-| System commands | Shell | Direct access to CLI tools |
-| Third-party integrations | MCP | Standard protocol, many servers available |
+| API calls / HTTP | **Python** (requests) | Typed params, error handling, JSON parsing |
+| Data processing | **Python** (pandas/numpy) | Rich ecosystem, structured returns |
+| File parsing / transformation | **Python** | Error handling, libraries, no shell escaping |
+| Complex logic | **Python** | Type hints, auto-schema, testable |
+| Database queries | **MCP** | Use official MCP database servers |
+| Third-party integrations | **MCP** | Standard protocol, many servers available |
+| Trivial single commands | Shell | Only for `wc`, `cp`, `ls`, etc. — nothing that parses output |
+
+### Python vs Shell: When to choose
+
+Use **Python** when the tool needs to:
+- Parse or validate output (JSON, CSV, regex)
+- Call an HTTP API
+- Handle errors gracefully with structured responses
+- Use any external library
+- Do anything that would require piping shell commands together
+
+Use **Shell** only when the tool is a thin wrapper around one standard command and failures are acceptable to surface as raw exit codes.
 
 ## Testing Custom Tools
 
