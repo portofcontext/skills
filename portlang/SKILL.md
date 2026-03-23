@@ -4,7 +4,7 @@ description: "portlang - the environment-first agent framework. Use when working
 license: MIT
 metadata:
   author: portofcontext
-  version: 1.4.0
+  version: 1.5.0
 ---
 
 # portlang Skill
@@ -13,11 +13,13 @@ metadata:
 
 portlang treats agent behavior as **search through a conditioned space**. You don't script loops—you declare the search space:
 - **Boundaries:** What the agent cannot do (enforced by sandbox)
-- **Verifiers:** What success looks like (runtime reward signals)
+- **Verifiers:** What success looks like (deterministic pass/fail signals, not walls of output)
 - **Context budget:** Hard token ceiling
 - **Environment:** What the agent can observe
 
 The runtime executes the search. Every run produces a **trajectory** (complete event log).
+
+**The instruction budget problem:** Models follow roughly 150–200 instructions reliably. A large system prompt, many tool definitions, growing conversation history, and re-observations all compete for that budget. portlang keeps budget usage low by design: each field is scoped narrowly, context is bounded by a hard ceiling, and re-observations inject only current state rather than accumulating history.
 
 ## Prerequisites
 
@@ -85,6 +87,9 @@ bash = true             # enable built-in bash tool; default: true
 output_schema = """{ ... }"""  # optional; JSON schema string for structured output
 
 tools = "inherit"       # optional; inherit [[tool]] list from parent instead of defining inline
+
+[[skill]]               # repeatable; load a Claude Code skill into the agent's context
+slug = "skill-name"     # (required) skill slug identifier
 
 [[tool]]                # repeatable; type = "python" | "shell" | "mcp"; bash/glob/write are built-in defaults
 
@@ -178,7 +183,7 @@ portlang view diff <id-a> <id-b>     # Open trajectory comparison HTML
 portlang view field <field-name>     # Open field adaptation report HTML
 portlang reflect --field <field-name>           # Analyze trajectories and surface insights (AI-powered)
 portlang reflect --field <field-name> -n 10     # Analyze N most recent trajectories
-portlang reflect --field <field-name> --trajectory-id <id>  # Analyze a specific trajectory
+portlang reflect --trajectory-id <id>                       # Analyze a specific trajectory (--field auto-detected)
 portlang docs                        # Print CLI reference as Markdown
 ```
 
@@ -336,7 +341,7 @@ max_cost = "$1.00"
 max_steps = 20
 ```
 
-### 7. Re-observation (keep context fresh)
+### 7. Re-observation (prevent context rot)
 
 ```toml
 [prompt]
@@ -347,7 +352,7 @@ re_observation = [
 ]
 ```
 
-Commands run before each agent step, injecting fresh state into context.
+Commands run before each agent step, injecting fresh state without accumulating history. This is the principled alternative to the Ralph loop — instead of periodically restarting the session to clear context rot, you push only what the agent needs to know right now. The context window stays bounded; the agent always knows current state.
 
 ### 8. Custom Environment
 
@@ -470,7 +475,21 @@ transport = "http"
 headers = { Authorization = "Bearer ${STRIPE_KEY}" }
 ```
 
-### 10. Claude Code Runner
+### 10. Agent Skills
+
+Load Claude Code skills into the agent's context using `[[skill]]` entries. Skills inject specialized knowledge or instructions into the agent before it starts.
+
+```toml
+[[skill]]
+slug = "rust-best-practices"
+
+[[skill]]
+slug = "portlang"
+```
+
+Skills are loaded in declaration order. Use `--runner claude-code` — skills are passed via `npx skills inject` and are available as system prompt context during the run.
+
+### 11. Claude Code Runner
 
 Use `--runner claude-code` to run the agent loop through Claude Code instead of the native runner. This gives the agent Edit, Glob, Grep, LSP, WebSearch, and WebFetch — the full Claude Code toolset — inside portlang's sandbox and verifier system.
 
@@ -496,7 +515,7 @@ portlang run example.field --runner claude-code
 
 **Limitations vs native runner:** `tool_call` verifiers and boundary context tracing are not supported.
 
-### 11. Batch Evaluation
+### 12. Batch Evaluation
 
 ```bash
 portlang eval run ./examples/
@@ -520,7 +539,7 @@ Useful for regression testing after changes.
 **Budget exhausted:**
 - Start conservative: `max_cost = "$0.25"` for simple tasks, `$1.00` for network-heavy tasks; increase after profiling
 - Increase `max_tokens` or reduce `max_steps` in `[boundary]`
-- Simplify `re_observation` commands
+- Simplify `re_observation` commands — context rot (early history crowding out current state) often masquerades as budget exhaustion; inject minimal, current-state signals only
 - Check for tool error loops
 - Move complex logic into Python tools so the agent does orchestration, not implementation
 
@@ -549,10 +568,10 @@ Useful for regression testing after changes.
 ## Core Principles
 
 1. **Boundaries are topology, not policy** - Make bad actions impossible, not discouraged
-2. **Verifiers are runtime reward signals** - Not post-hoc checks, they steer behavior
-3. **Context is finite** - Hard ceiling, no magic compression
-4. **Trajectories are data** - Replay, diff, analyze distributions
-5. **Engineer the space, not the searcher** - Agent policy is opaque, environment is yours
+2. **Verifiers give deterministic signals** - Not post-hoc checks; they steer behavior by giving the agent precise feedback instead of raw output to interpret
+3. **Context is finite and attention degrades** - Smaller context windows produce better results; hard ceilings are quality controls, not just cost controls
+4. **Trajectories are data** - Replay, diff, analyze distributions; measure convergence rate before shipping
+5. **Engineer the environment, not the prompt** - Agent policy is opaque; the environment is yours. Use actual control flow for control flow, not prompt instructions
 
 ---
 
