@@ -4,7 +4,7 @@ description: "portlang - the environment-first agent framework. Use when working
 license: MIT
 metadata:
   author: portofcontext
-  version: 1.5.0
+  version: 1.5.1
 ---
 
 # portlang Skill
@@ -79,12 +79,13 @@ image = "custom:tag"    # pre-built image (overrides dockerfile)
 
 [boundary]              # optional, or: boundary = "inherit"
 allow_write = ["*.py"]  # glob patterns for writable paths; default: none
+collect = ["report.md"] # files to deliver after run (subset of allow_write); default: all allow_write
 network = "deny"        # "deny" | "allow"; default: allow
 max_tokens = 150000     # hard ceiling on total context tokens
 max_cost = "$2.00"      # hard ceiling on total cost (must be quoted string with $)
 max_steps = 30          # hard ceiling on agent steps
 bash = true             # enable built-in bash tool; default: true
-output_schema = """{ ... }"""  # optional; JSON schema string for structured output
+output_schema = """{ ... }"""  # optional; JSON schema string for structured output via submit_output
 
 tools = "inherit"       # optional; inherit [[tool]] list from parent instead of defining inline
 
@@ -167,6 +168,8 @@ portlang run task.field --dry-run   # Validate field without running (parse, che
 portlang run task.field -n 10       # Run N times and report convergence reliability
 portlang run task.field --runner claude-code  # Use Claude Code as agent loop
 portlang run task.field --auto-reflect       # Run and immediately reflect on the trajectory
+portlang run task.field --output-dir ./out  # Copy collected output files to ./out after run
+portlang run task.field --json              # Emit run result as JSON (artifacts + structured_output + metadata)
 portlang run task.field --var k=v   # Pass a template variable (repeatable)
 portlang run task.field --vars p.json  # Pass variables from a JSON file
 portlang run task.field --input ./data.csv   # Stage a file into the workspace before the agent starts
@@ -254,13 +257,37 @@ portlang run task.field --input ./data.csv   # stage input file into workspace
 
 `--input` with a file copies it to the workspace root. `--input '{"key":"val"}'` writes `portlang_input.json`. Use `re_observation` to surface the file contents to the agent each step.
 
-### 3. Structured Output (agent produces validated JSON)
+### 3. Output: Files and Structured Data
 
-Define `output_schema` inside `[boundary]` as a JSON string. Schema validation is automatic — no separate verifier needed:
+portlang has two output mechanisms.
+
+| Mechanism | How it works | Best for |
+|-----------|-------------|----------|
+| **`collect` + file artifacts** | Files the agent writes to the workspace, delivered after the run via `--output-dir` or `--json` | Documents, code, reports — anything that lives as a file |
+| **`output_schema` + `submit_output`** | Agent calls a built-in tool with a JSON payload matching the declared schema | Typed structured payloads the agent constructs — summaries, verdicts, scores, extracted data |
+
+**File artifacts — `collect`:**
 
 ```toml
 [boundary]
-allow_write = ["output.json"]
+allow_write = ["report.md", "results/*.json"]
+collect = ["report.md", "results/*.json"]  # subset to deliver; default: all allow_write
+```
+
+```bash
+portlang run task.field --output-dir ./out   # copies report.md, results/*.json into ./out/
+portlang run task.field --json               # embeds file contents in JSON stdout
+portlang run task.field --json | jq '.artifacts[0].content'
+```
+
+If `collect` is omitted, all `allow_write` files are delivered. Set `collect = []` to deliver nothing.
+
+**Structured output — `output_schema`:**
+
+Define `output_schema` in `[boundary]` as a JSON Schema string. The agent calls `submit_output` with a matching payload; portlang validates it automatically — no verifier needed for schema conformance:
+
+```toml
+[boundary]
 output_schema = '''
 {
   "type": "object",
@@ -273,7 +300,37 @@ output_schema = '''
 '''
 ```
 
-portlang validates the output against the schema, writes `output.json` to `/workspace`, and reports schema violations as failures. Add `[[verifier]]` entries only for additional business logic checks beyond schema conformance. Typed verifiers (`levenshtein`, `semantic`) can omit `file` to validate against the structured output directly.
+To assert specific field values in structured output, use a `tool_call` verifier:
+
+```toml
+[[verifier]]
+type = "tool_call"
+name = "status-ok"
+tool = "submit_output"
+field = "/input/status"
+matches = "^success$"
+trigger = "on_stop"
+description = "status must be success"
+```
+
+**`--json` output combines both:**
+
+```json
+{
+  "run_id": "...",
+  "field": "my-task",
+  "outcome": "converged",
+  "structured_output": { "status": "success", "count": 3 },
+  "artifacts": [
+    { "path": "report.md", "size": 4231, "content": "# Report\n..." }
+  ],
+  "cost": "0.023",
+  "tokens": 18420,
+  "steps": 8,
+  "duration_ms": 34201,
+  "trajectory_id": "..."
+}
+```
 
 ### 4. Multi-Layer Verifiers (fail fast with precise feedback)
 
@@ -296,7 +353,7 @@ trigger = "on_stop"
 description = "output.txt must contain exactly '42'"
 ```
 
-Verifiers run in order, stop on first failure. Use `output_schema` instead of json verifiers when the agent produces structured JSON output.
+Verifiers run in order, stop on first failure. Use `output_schema` when the agent produces structured JSON output — schema validation is built-in, no verifier needed.
 
 ### 5. Smart Verifier Types
 
@@ -370,7 +427,7 @@ image = "myregistry/myimage:latest"
 
 **Default container baseline:** The container is minimal. Available by default: standard POSIX shell builtins, `bash`, `curl`, `wc`, `grep`, `cat`, `ls`, `find`. **Not available** unless added to `packages` or a custom image: `python3`, `node`, `jq`, `git`, and most other tools.
 
-Shell verifiers run inside the container and are subject to the same constraints. **Prefer typed verifiers** (`type = "json"`, `"levenshtein"`, `"semantic"`) over shell verifiers whenever possible — they run natively in the portlang runtime and require nothing installed. Only use shell verifiers for checks that require container-side execution, and only invoke tools you've declared in `packages`.
+Shell verifiers run inside the container and are subject to the same constraints. **Prefer typed verifiers** (`"levenshtein"`, `"semantic"`, `"tool_call"`) or `output_schema` over shell verifiers whenever possible — they run natively in the portlang runtime and require nothing installed. Only use shell verifiers for checks that require container-side execution, and only invoke tools you've declared in `packages`.
 
 ### 9. Custom Tools
 

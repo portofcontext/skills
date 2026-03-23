@@ -395,26 +395,44 @@ trigger = "on_stop"
 description = "No duplicate URLs in scraped data"
 ```
 
-## JSON, Levenshtein, and Semantic Verifiers
+## Levenshtein, Semantic, and Structured Output Verifiers
 
-### 21. JSON Structure Validation (no jq/python needed)
+### 21. Structured Output Schema Validation
+
+Use `output_schema` in `[boundary]` when the agent should produce validated JSON. The agent calls `submit_output` with the payload; portlang validates it against the schema automatically — no verifier needed:
 
 ```toml
-[[verifier]]
-type = "json"
-name = "valid-schema"
-file = "output.json"
-schema = '{"type": "object", "required": ["status", "count", "items"], "properties": {"status": {"type": "string", "enum": ["ok", "error"]}, "count": {"type": "integer"}, "items": {"type": "array"}}}'
-trigger = "on_stop"
-description = "output.json must match required schema"
+[boundary]
+output_schema = '''
+{
+  "type": "object",
+  "required": ["status", "count", "items"],
+  "properties": {
+    "status": {"type": "string", "enum": ["ok", "error"]},
+    "count": {"type": "integer"},
+    "items": {"type": "array"}
+  }
+}
+'''
 ```
 
-Omit `schema` to simply check the file contains valid JSON:
+To verify a specific field value in the structured output, use a `tool_call` verifier:
 ```toml
 [[verifier]]
-type = "json"
+type = "tool_call"
+name = "status-is-ok"
+trigger = "on_stop"
+tool = "submit_output"
+field = "/input/status"
+matches = "^ok$"
+description = "status must be ok"
+```
+
+To validate a JSON file written by the agent (not structured output), use a shell verifier:
+```toml
+[[verifier]]
 name = "valid-json"
-file = "output.json"
+command = "python3 -c \"import json; json.load(open('/workspace/output.json'))\""
 trigger = "on_stop"
 description = "output.json must be valid JSON"
 ```
@@ -473,22 +491,22 @@ Reads `EMBEDDING_API_KEY` or `OPENAI_API_KEY` from the environment.
 ### 24. Combining Typed Verifiers (progressive pipeline)
 
 ```toml
-# Layer 1: File is valid JSON
+# Layer 1: File exists and is valid JSON
 [[verifier]]
-type = "json"
 name = "valid-json"
-file = "report.json"
+command = "python3 -c \"import json; json.load(open('/workspace/report.json'))\""
 trigger = "on_stop"
 description = "report.json must be valid JSON"
 
-# Layer 2: JSON matches required schema
+# Layer 2: Structured output has required fields (use output_schema in [boundary] instead when possible)
 [[verifier]]
-type = "json"
+type = "tool_call"
 name = "schema-check"
-file = "report.json"
-schema = '{"type": "object", "required": ["title", "body", "score"]}'
 trigger = "on_stop"
-description = "report.json must have title, body, and score fields"
+tool = "submit_output"
+field = "/input/title"
+matches = ".+"
+description = "submit_output must include a non-empty title"
 
 # Layer 3: The written content conveys the right meaning
 [[verifier]]
